@@ -1,9 +1,12 @@
 # SPDX-License-Identifier: (GPL-2.0 OR Linux-OpenIB)
 # Copyright (c) 2018, Mellanox Technologies. All rights reserved. See COPYING file
 
-include 'libibverbs_enums.pxd'
+#cython: language_level=3
+
 from libc.stdint cimport uint8_t, uint16_t, uint32_t, uint64_t
 from posix.time cimport timespec
+from pyverbs.libibverbs_enums cimport *
+
 
 cdef extern from 'infiniband/verbs.h':
 
@@ -187,6 +190,7 @@ cdef extern from 'infiniband/verbs.h':
         unsigned char           link_layer
         unsigned char           flags
         unsigned short          port_cap_flags2
+        unsigned int            active_speed_ex
 
     cdef struct ibv_comp_channel:
         ibv_context     *context
@@ -349,6 +353,10 @@ cdef extern from 'infiniband/verbs.h':
 
     cdef union qp_type:
         xrc             xrc
+
+    cdef struct ibv_fd_arr:
+        int        *arr
+        uint32_t    count
 
     cdef struct ibv_send_wr:
         unsigned long   wr_id
@@ -637,6 +645,25 @@ cdef extern from 'infiniband/verbs.h':
         ibv_wq   **ind_tbl
         uint32_t comp_mask
 
+    cdef struct ibv_dmah_init_attr:
+        uint32_t comp_mask
+        uint32_t cpu_id
+        uint8_t ph
+        uint8_t tph_mem_type
+
+    cdef struct ibv_dmah:
+        ibv_context *context
+
+    cdef struct ibv_mr_init_attr:
+        size_t length
+        int access
+        uint64_t comp_mask
+        uint64_t iova
+        void *addr
+        int fd
+        uint64_t fd_offset
+        ibv_dmah *dmah
+
     ibv_device **ibv_get_device_list(int *n)
     int ibv_get_device_index(ibv_device *device);
     void ibv_free_device_list(ibv_device **list)
@@ -652,6 +679,7 @@ cdef extern from 'infiniband/verbs.h':
                       int index, ibv_gid *gid)
     int ibv_query_pkey(ibv_context *context, unsigned int port_num,
                        int index, uint16_t *pkey)
+    int ibv_get_pkey_index(ibv_context *context, unsigned int port_num, uint16_t pkey)
     ibv_pd *ibv_alloc_pd(ibv_context *context)
     int ibv_dealloc_pd(ibv_pd *pd)
     ibv_mr *ibv_reg_mr(ibv_pd *pd, void *addr, size_t length, int access)
@@ -662,6 +690,9 @@ cdef extern from 'infiniband/verbs.h':
     int ibv_dereg_mr(ibv_mr *mr)
     int ibv_advise_mr(ibv_pd *pd, uint32_t advice, uint32_t flags,
                       ibv_sge *sg_list, uint32_t num_sge)
+    ibv_dmah *ibv_alloc_dmah(ibv_context *context, ibv_dmah_init_attr *attr)
+    int ibv_dealloc_dmah(ibv_dmah *dmah)
+    ibv_mr *ibv_reg_mr_ex(ibv_pd *pd, ibv_mr_init_attr *mr_init_attr)
     ibv_mw *ibv_alloc_mw(ibv_pd *pd, ibv_mw_type type)
     int ibv_dealloc_mw(ibv_mw *mw)
     ibv_dm *ibv_alloc_dm(ibv_context *context, ibv_alloc_dm_attr *attr)

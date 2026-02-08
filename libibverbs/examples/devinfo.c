@@ -135,7 +135,7 @@ static const char *width_str(uint8_t width)
 	}
 }
 
-static const char *speed_str(uint8_t speed)
+static const char *speed_str(uint32_t speed)
 {
 	switch (speed) {
 	case 1:  return "2.5 Gbps";
@@ -148,6 +148,7 @@ static const char *speed_str(uint8_t speed)
 	case 32: return "25.0 Gbps";
 	case 64: return "50.0 Gbps";
 	case 128: return "100.0 Gbps";
+	case 256: return "200.0 Gbps";
 	default: return "invalid speed";
 	}
 }
@@ -329,7 +330,9 @@ static void print_odp_trans_caps(uint32_t trans)
 					    IBV_ODP_SUPPORT_WRITE |
 					    IBV_ODP_SUPPORT_READ |
 					    IBV_ODP_SUPPORT_ATOMIC |
-					    IBV_ODP_SUPPORT_SRQ_RECV);
+					    IBV_ODP_SUPPORT_SRQ_RECV |
+					    IBV_ODP_SUPPORT_FLUSH |
+					    IBV_ODP_SUPPORT_ATOMIC_WRITE);
 
 	if (!trans) {
 		printf("\t\t\t\t\tNO SUPPORT\n");
@@ -346,6 +349,10 @@ static void print_odp_trans_caps(uint32_t trans)
 			printf("\t\t\t\t\tSUPPORT_ATOMIC\n");
 		if (trans & IBV_ODP_SUPPORT_SRQ_RECV)
 			printf("\t\t\t\t\tSUPPORT_SRQ\n");
+		if (trans & IBV_ODP_SUPPORT_FLUSH)
+			printf("\t\t\t\t\tSUPPORT_FLUSH\n");
+		if (trans & IBV_ODP_SUPPORT_ATOMIC_WRITE)
+			printf("\t\t\t\t\tSUPPORT_ATOMIC_WRITE\n");
 		if (trans & unknown_transport_caps)
 			printf("\t\t\t\t\tUnknown flags: 0x%" PRIX32 "\n",
 			       trans & unknown_transport_caps);
@@ -650,7 +657,10 @@ static int print_hca_cap(struct ibv_device *ib_dev, uint8_t ib_port)
 			printf("\t\t\tactive_width:\t\t%sX (%d)\n",
 			       width_str(port_attr.active_width), port_attr.active_width);
 			printf("\t\t\tactive_speed:\t\t%s (%d)\n",
-			       speed_str(port_attr.active_speed), port_attr.active_speed);
+			       port_attr.active_speed_ex ? speed_str(port_attr.active_speed_ex) :
+							   speed_str(port_attr.active_speed),
+			       port_attr.active_speed_ex ? port_attr.active_speed_ex :
+							   port_attr.active_speed);
 			if (ib_dev->transport_type == IBV_TRANSPORT_IB)
 				printf("\t\t\tphys_state:\t\t%s (%d)\n",
 				       port_phy_state_str(port_attr.phys_state), port_attr.phys_state);

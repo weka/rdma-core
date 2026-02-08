@@ -24,7 +24,7 @@
 #      Use the historical search path for providers, in the standard system library.
 #  -DNO_COMPAT_SYMS=1 (default disabled)
 #      Do not generate backwards compatibility symbols in the shared
-#      libraries. This may is necessary if using a dynmic linker that does
+#      libraries. This may be necessary if using a dynamic linker that does
 #      not support symbol versions, such as uclibc.
 #  -DIOCTL_MODE=write (default both)
 #      Disable new kABI ioctl() support and support only the legacy write
@@ -52,8 +52,9 @@
 #      Disable man pages. Allows rdma-core to be built and installed
 #      (without man pages) when neither pandoc/rst2man nor the pandoc-prebuilt
 #      directory are available.
-#   -DENABLE_LTTNG (default, no tracing support)
-#      Enable LTTng tracing.
+#   -DTRACING=LTTNG/USDT/None (default None)
+#      Enable LTTng (Linux Trace Toolkit) or USDT (Userspace Statically Defined)
+#      trace points for dynamic tracing.
 
 if (${CMAKE_VERSION} VERSION_LESS "3.18.1")
 	# Centos 7 support
@@ -79,11 +80,11 @@ endif()
 set(PACKAGE_NAME "RDMA")
 
 # See Documentation/versioning.md
-set(PACKAGE_VERSION "48.0")
+set(PACKAGE_VERSION "62.0")
 # When this is changed the values in these files need changing too:
 #   debian/control
 #   debian/libibverbs1.symbols
-set(IBVERBS_PABI_VERSION "34")
+set(IBVERBS_PABI_VERSION "59")
 set(IBVERBS_PROVIDER_SUFFIX "-rdmav${IBVERBS_PABI_VERSION}.so")
 
 #-------------------------
@@ -171,6 +172,9 @@ endif()
 set(DISTRO_FLAVOUR "None" CACHE
   STRING "Flavour of distribution to install for. This primarily impacts the init.d scripts installed.")
 
+set(TRACING "None" CACHE
+  STRING "Enable LTTNG (Linux Trace Toolkit) or USDT (Userspace Statically Defined Tracing).")
+
 #-------------------------
 # Load CMake components
 set(BUILDLIB "${PROJECT_SOURCE_DIR}/buildlib")
@@ -188,6 +192,9 @@ include(RDMA_DoFixup)
 include(publish_headers)
 include(rdma_functions)
 include(pyverbs_functions)
+
+check_c_compiler_flag("-Wcast-align=strict" HAVE_WCAST_ALIGN_STRICT)
+
 if (NO_MAN_PAGES)
   # define empty stub functions to omit man page processing
   function(rdma_man_pages)
@@ -214,19 +221,39 @@ if (NOT HAVE_WORKING_WERROR)
   message(FATAL_ERROR "-Werror doesn't work (compiler always creates warnings?). Werror is required for CMake.")
 endif()
 
-# Look for Python. We prefer some variant of python 3 if the system has it.
-FIND_PACKAGE(PythonInterp 3 QUIET)
-if (PythonInterp_FOUND)
-  # pyverbs can only use python3:
-  if (NO_PYVERBS)
-    set(CYTHON_EXECUTABLE "")
-  else()
+# Use Python modules based on CMake version for backward compatibility
+if (${CMAKE_VERSION} VERSION_LESS "3.12")
+        FIND_PACKAGE(PythonInterp REQUIRED)
+        FIND_PACKAGE(PythonLibs ${PYTHON_VERSION_MAJOR}.${PYTHON_VERSION_MINOR} EXACT)
+elseif (${CMAKE_VERSION} VERSION_GREATER_EQUAL "3.12")
+        set(Python_EXECUTABLE ${PYTHON_EXECUTABLE})
+        FIND_PACKAGE(Python 3 REQUIRED COMPONENTS Interpreter OPTIONAL_COMPONENTS Development)
+        set(PYTHON_EXECUTABLE ${Python_EXECUTABLE})
+        if(Python_Development_FOUND)
+            set(PYTHONLIBS_FOUND ${Python_Development_FOUND})
+            set(PYTHON_LIBRARIES ${Python_LIBRARIES})
+            set(PYTHON_INCLUDE_DIRS ${Python_INCLUDE_DIRS})
+        endif()
+endif()
+
+set(CYTHON_EXECUTABLE "")
+if(NOT NO_PYVERBS AND PYTHONLIBS_FOUND)
+    execute_process(COMMAND "${PYTHON_EXECUTABLE}" -c
+        "import sysconfig; print(sysconfig.get_path(\"platlib\"))"
+        OUTPUT_VARIABLE py_path)
+    string(STRIP ${py_path} py_path)
+    set(CMAKE_INSTALL_PYTHON_ARCH_LIB "${py_path}"
+        CACHE PATH "Location for architecture specific python libraries")
+
+    # See PEP3149
+    execute_process(COMMAND "${PYTHON_EXECUTABLE}" -c
+        "import sysconfig; x = sysconfig.get_config_var(\"EXT_SUFFIX\"); print(x if x else '.so')"
+        OUTPUT_VARIABLE py_path)
+    string(STRIP ${py_path} CMAKE_PYTHON_SO_SUFFIX)
+
     FIND_PACKAGE(cython)
-  endif()
-else()
-  # But we still must have python (be it 2) for the build process:
-  FIND_PACKAGE(PythonInterp REQUIRED)
-  set(CYTHON_EXECUTABLE "")
+elseif(NOT NO_PYVERBS AND NOT PYTHONLIBS_FOUND)
+    message(WARNING "pyverbs build requested but python development files not found")
 endif()
 
 find_program(SYSTEMCTL_BIN systemctl HINTS "/usr/bin" "/bin")
@@ -374,6 +401,16 @@ if (NOT HAVE_LONG_LONG_U64)
   add_definitions("-D__SANE_USERSPACE_TYPES__")
 endif()
 
+# Check __SOCKADDR_ARG exist and is union
+set(SAFE_CMAKE_REQUIRED_INCLUDES "${CMAKE_REQUIRED_INCLUDES}")
+set(CMAKE_REQUIRED_INCLUDES "${BUILD_INCLUDE}")
+RDMA_Check_C_Compiles(HAVE_SOCKADDR_ARG_AS_UNION "
+#define _GNU_SOURCE
+#include <sys/socket.h>
+ int main(int argc,const char *argv[]) {struct sockaddr addr;__SOCKADDR_ARG sa; sa.__sockaddr__ = (struct sockaddr *)&addr; (void)addr; (void)sa; return 0;}"
+)
+set(CMAKE_REQUIRED_INCLUDES "${SAFE_CMAKE_REQUIRED_INCLUDES}")
+
 # glibc and kernel uapi headers can co-exist
 CHECK_C_SOURCE_COMPILES("
  #include <sys/socket.h>
@@ -441,31 +478,6 @@ if (NO_COMPAT_SYMS)
   set(HAVE_LIMITED_SYMBOL_VERSIONS 1)
 else()
   set(HAVE_FULL_SYMBOL_VERSIONS 1)
-endif()
-
-# A cython & python-devel installation that matches our selected interpreter.
-
-if (CYTHON_EXECUTABLE)
- # cmake has really bad logic here, if PythonIterp has been run it tries to
- # find a matching -devel installation but will happily return a non-matching
- # one too. We need them both to match exactly to guarantee cython does the
- # right thing.
-  FIND_PACKAGE(PythonLibs ${PYTHON_VERSION_MAJOR}.${PYTHON_VERSION_MINOR}
-    EXACT REQUIRED)
-
- # Get a default installation path
-  execute_process(COMMAND "${PYTHON_EXECUTABLE}" -c
-    "import sysconfig; print(sysconfig.get_path(\"platlib\"))"
-  OUTPUT_VARIABLE py_path)
-  string(STRIP ${py_path} py_path)
-  set(CMAKE_INSTALL_PYTHON_ARCH_LIB "${py_path}"
-  CACHE PATH "Location for architecture specific python libraries")
-
- # See PEP3149
-  execute_process(COMMAND "${PYTHON_EXECUTABLE}" -c
-    "import sysconfig; x = sysconfig.get_config_var(\"EXT_SUFFIX\"); print(x if x else '.so')"
-    OUTPUT_VARIABLE py_path)
-  string(STRIP ${py_path} CMAKE_PYTHON_SO_SUFFIX)
 endif()
 
 set(NO_MAN_PAGES "OFF" CACHE BOOL "Disable build/install of man pages")
@@ -544,7 +556,7 @@ RDMA_DoFixup("${SYSTEMD_FOUND}" "systemd/sd-daemon.h")
 # drm headers
 
 # Check if the headers have been installed by kernel-headers
-find_path(DRM_INCLUDE_DIRS "drm.h" PATH_SUFFIXES "drm")
+find_path(DRM_INCLUDE_DIRS "drm.h" PATH_SUFFIXES "drm" "libdrm")
 
 # Alternatively the headers could have been installed by libdrm
 if (NOT DRM_INCLUDE_DIRS)
@@ -552,17 +564,21 @@ if (NOT DRM_INCLUDE_DIRS)
 endif()
 
 if (DRM_INCLUDE_DIRS)
-  if (EXISTS ${DRM_INCLUDE_DIRS}/i915_drm.h AND EXISTS ${DRM_INCLUDE_DIRS}/amdgpu_drm.h)
+  if (EXISTS "${DRM_INCLUDE_DIRS}/i915_drm.h" AND EXISTS "${DRM_INCLUDE_DIRS}/amdgpu_drm.h")
     include_directories(${DRM_INCLUDE_DIRS})
   else()
     unset(DRM_INCLUDE_DIRS CACHE)
   endif()
 endif()
 
-# LTTng Tracer support
-if (DEFINED ENABLE_LTTNG)
+# Dynamic Tracing support
+if (TRACING STREQUAL "LTTNG")
   include(FindLTTngUST REQUIRED)
   add_definitions(-DLTTNG_ENABLED)
+elseif (TRACING STREQUAL "USDT")
+  add_definitions(-DUSDT_ENABLED)
+elseif (NOT TRACING STREQUAL "None")
+  message(FATAL_ERROR "-DTRACING=${TRACING} is not a valid choice")
 endif()
 
 #-------------------------
@@ -722,6 +738,8 @@ add_subdirectory(providers/efa)
 add_subdirectory(providers/efa/man)
 add_subdirectory(providers/erdma)
 add_subdirectory(providers/hns)
+add_subdirectory(providers/hns/man)
+add_subdirectory(providers/ionic)
 add_subdirectory(providers/irdma)
 add_subdirectory(providers/mana)
 add_subdirectory(providers/mana/man)

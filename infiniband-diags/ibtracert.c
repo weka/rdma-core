@@ -48,6 +48,7 @@
 #include "ibdiag_common.h"
 
 static struct ibmad_port *srcport;
+static struct ibmad_ports_pair *srcports;
 
 #define MAXHOPS	63
 
@@ -542,11 +543,15 @@ static Node *find_mcpath(ib_portid_t * from, int mlid)
 
 	DEBUG("from %s", portid2str(from));
 
-	if (!(node = calloc(1, sizeof(Node))))
+	node = calloc(1, sizeof(Node));
+	if (!node)
 		IBEXIT("out of memory");
 
-	if (!(port = calloc(1, sizeof(Port))))
+	port = calloc(1, sizeof(Port));
+	if (!port) {
+		free(node);
 		IBEXIT("out of memory");
+	}
 
 	if (get_node(node, port, from) < 0) {
 		IBWARN("can't reach node %s", portid2str(from));
@@ -564,8 +569,11 @@ static Node *find_mcpath(ib_portid_t * from, int mlid)
 			return NULL;	/* ibtracert from host to itself is unsupported */
 		}
 
-		if (switch_mclookup(node, from, mlid, map) < 0 || !map[0])
+		if (switch_mclookup(node, from, mlid, map) < 0 || !map[0]) {
+			free(node);
+			free(port);
 			return NULL;
+		}
 		return node;
 	}
 
@@ -612,7 +620,8 @@ static Node *find_mcpath(ib_portid_t * from, int mlid)
 					if (from->drpath.cnt > 0)
 						path->drpath.cnt--;
 				} else {
-					if (!(port = calloc(1, sizeof(Port))))
+					port = calloc(1, sizeof(Port));
+					if (!port)
 						IBEXIT("out of memory");
 
 					if (get_port(port, i, path) < 0) {
@@ -637,11 +646,18 @@ static Node *find_mcpath(ib_portid_t * from, int mlid)
 					}
 				}
 
-				if (!(remotenode = calloc(1, sizeof(Node))))
+				remotenode = calloc(1, sizeof(Node));
+				if (!remotenode) {
+					free(port);
 					IBEXIT("out of memory");
+				}
 
-				if (!(remoteport = calloc(1, sizeof(Port))))
+				remoteport = calloc(1, sizeof(Port));
+				if (!remoteport) {
+					free(port);
+					free(remotenode);
 					IBEXIT("out of memory");
+				}
 
 				if (get_node(remotenode, remoteport, path) < 0) {
 					IBWARN
@@ -670,6 +686,9 @@ static Node *find_mcpath(ib_portid_t * from, int mlid)
 						     remotenode, remoteport);
 
 				path->drpath.cnt--;	/* restore path */
+				free(port);
+				free(remotenode);
+				free(remoteport);
 			}
 		}
 	}
@@ -790,14 +809,14 @@ static int get_route(char *srcid, char *dstid) {
 	ib_portid_t dest_portid = { 0 };
 	Node *endnode;
 
-	if (resolve_portid_str(ibd_ca, ibd_ca_port, &src_portid, srcid,
-			       ibd_dest_type, ibd_sm_id, srcport) < 0) {
+	if (resolve_portid_str(srcports->gsi.ca_name, ibd_ca_port, &src_portid, srcid,
+			       ibd_dest_type, ibd_sm_id, srcports->gsi.port) < 0) {
 		IBWARN("can't resolve source port %s", srcid);
 		return -1;
 	}
 
-	if (resolve_portid_str(ibd_ca, ibd_ca_port, &dest_portid, dstid,
-			       ibd_dest_type, ibd_sm_id, srcport) < 0) {
+	if (resolve_portid_str(srcports->gsi.ca_name, ibd_ca_port, &dest_portid, dstid,
+			       ibd_dest_type, ibd_sm_id, srcports->gsi.port) < 0) {
 		IBWARN("can't resolve destination port %s", dstid);
 		return -1;
 	}
@@ -902,7 +921,11 @@ int main(int argc, char **argv)
 	if (ibd_timeout)
 		timeout = ibd_timeout;
 
-	srcport = mad_rpc_open_port(ibd_ca, ibd_ca_port, mgmt_classes, 3);
+	srcports = mad_rpc_open_port2(ibd_ca, ibd_ca_port, mgmt_classes, 3, 1);
+	if (!srcports)
+		IBEXIT("Failed to open '%s' port '%d'", ibd_ca, ibd_ca_port);
+
+	srcport = srcports->smi.port;
 	if (!srcport)
 		IBEXIT("Failed to open '%s' port '%d'", ibd_ca, ibd_ca_port);
 
@@ -949,7 +972,7 @@ int main(int argc, char **argv)
         }
 	close_node_name_map(node_name_map);
 
-	mad_rpc_close_port(srcport);
+	mad_rpc_close_port2(srcports);
 
 	exit(0);
 }

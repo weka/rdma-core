@@ -71,11 +71,18 @@ M:	Dennis Dalessandro <dennis.dalessandro@cornelisnetworks.com>
 S:	Supported
 F:	providers/hfi1verbs/
 
-HNS USERSPACE PROVIDER (for hns-roce.ko)
-M:	Lijun Ou <oulijun@huawei.com>
-M:	Wei Hu(Xavier) <xavier.huwei@huawei.com>
+HNS USERSPACE PROVIDER (for hns-roce-hw-v2.ko)
+M:	Junxian Huang <huangjunxian6@hisilicon.com>
+M:	Chengchang Tang <tangchengchang@huawei.com>
 S:	Supported
 F:	providers/hns/
+
+IONIC USERSPACE PROVIDER (for ionic_rdma.ko)
+M:	Allen Hubbe <Allen.Hubbe@amd.com>
+M:	Andrew Boyer <Andrew.Boyer@amd.com>
+M:	Abhijit Gangurde <abhijit.gangurde@amd.com>
+S:	Supported
+F:	providers/ionic/
 
 IRDMA USERSPACE PROVIDER (for i40iw.ko and irdma.ko)
 M:	Sindhu Devale <sindhu.devale@intel.com>

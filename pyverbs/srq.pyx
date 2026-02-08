@@ -2,6 +2,7 @@ import weakref
 from libc.errno cimport errno
 from libc.string cimport memcpy
 from libc.stdlib cimport malloc, free
+from libc.stdint cimport uintptr_t
 from pyverbs.pyverbs_error import PyverbsRDMAError, PyverbsError
 from pyverbs.wr cimport RecvWR, SGE, copy_sg_array
 from pyverbs.base import PyverbsRDMAErrno
@@ -250,7 +251,7 @@ cdef class SRQ(PyverbsCM):
         self.qps = weakref.WeakSet()
         if isinstance(creator, PD):
             self._create_srq(creator, attr)
-        elif type(creator) == Context:
+        elif isinstance(creator, Context):
             self._create_srq_ex(creator, attr)
         else:
             raise PyverbsRDMAError('Srq needs either Context or PD for creation')
@@ -336,3 +337,7 @@ cdef class SRQ(PyverbsCM):
             if bad_wr:
                 memcpy(&bad_wr.recv_wr, my_bad_wr, sizeof(bad_wr.recv_wr))
             raise PyverbsRDMAError('Failed to post receive to SRQ.', rc)
+
+    @property
+    def srq(self):
+       return <uintptr_t>self.srq

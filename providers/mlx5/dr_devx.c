@@ -243,6 +243,9 @@ int dr_devx_query_device(struct ibv_context *ctx, struct dr_devx_caps *caps)
 	caps->roce_caps.fl_rc_qp_when_roce_disabled = DEVX_GET(query_hca_cap_out, out,
 					capability.cmd_hca_cap.fl_rc_qp_when_roce_disabled);
 
+	caps->roce_caps.qp_ts_format = DEVX_GET(query_hca_cap_out, out,
+						capability.cmd_hca_cap.sq_ts_format);
+
 	if (caps->support_modify_argument) {
 		caps->log_header_modify_argument_granularity =
 			DEVX_GET(query_hca_cap_out, out,
@@ -328,6 +331,8 @@ int dr_devx_query_device(struct ibv_context *ctx, struct dr_devx_caps *caps)
 		return err;
 	}
 
+	caps->max_encap_size = DEVX_GET(query_hca_cap_out, out,
+					capability.flow_table_nic_cap.max_encap_header_size);
 	caps->nic_rx_drop_address = DEVX_GET64(query_hca_cap_out, out,
 					       capability.flow_table_nic_cap.
 					       sw_steering_nic_rx_action_drop_icm_address);
@@ -437,6 +442,15 @@ int dr_devx_query_device(struct ibv_context *ctx, struct dr_devx_caps *caps)
 		DEVX_GET64(query_hca_cap_out, out,
 			   capability.device_mem_cap.header_modify_pattern_sw_icm_start_address);
 
+	caps->log_sw_encap_icm_size =
+		DEVX_GET(query_hca_cap_out, out,
+			 capability.device_mem_cap.log_indirect_encap_sw_icm_size);
+
+	if (caps->log_sw_encap_icm_size)
+		caps->indirect_encap_icm_base =
+			DEVX_GET64(query_hca_cap_out, out,
+				   capability.device_mem_cap.indirect_encap_icm_base);
+
 	/* RoCE caps */
 	if (roce) {
 		err = dr_devx_query_nic_vport_context(ctx, &caps->roce_caps.roce_en);
@@ -545,10 +559,27 @@ int dr_devx_query_flow_table(struct mlx5dv_devx_obj *obj, uint32_t type,
 		return mlx5_get_cmd_status_err(ret, out);
 	}
 
-	*tx_icm_addr = DEVX_GET64(query_flow_table_out, out,
-				  flow_table_context.sw_owner_icm_root_1);
-	*rx_icm_addr = DEVX_GET64(query_flow_table_out, out,
-				  flow_table_context.sw_owner_icm_root_0);
+	switch (type) {
+	case FS_FT_NIC_TX:
+		*tx_icm_addr = DEVX_GET64(query_flow_table_out, out,
+					  flow_table_context.sw_owner_icm_root_0);
+		*rx_icm_addr = 0;
+		break;
+	case FS_FT_NIC_RX:
+		*rx_icm_addr = DEVX_GET64(query_flow_table_out, out,
+					  flow_table_context.sw_owner_icm_root_0);
+		*tx_icm_addr = 0;
+		break;
+	case FS_FT_FDB:
+		*rx_icm_addr = DEVX_GET64(query_flow_table_out, out,
+					  flow_table_context.sw_owner_icm_root_0);
+		*tx_icm_addr = DEVX_GET64(query_flow_table_out, out,
+					  flow_table_context.sw_owner_icm_root_1);
+		break;
+	default:
+		errno = EINVAL;
+		return errno;
+	}
 
 	return 0;
 }

@@ -122,6 +122,12 @@ int mlx5_query_port(struct ibv_context *context, uint8_t port,
 	return ibv_cmd_query_port(context, port, attr, &cmd, sizeof cmd);
 }
 
+int mlx5_query_port_speed(struct ibv_context *context, uint32_t port,
+			  uint64_t *speed)
+{
+	return ibv_cmd_query_port_speed(context, port, speed);
+}
+
 void mlx5_async_event(struct ibv_context *context,
 		      struct ibv_async_event *event)
 {
@@ -448,6 +454,7 @@ static void mlx5_detach_dedicated_uar(struct ibv_context *context, struct mlx5_b
 
 struct ibv_td *mlx5_alloc_td(struct ibv_context *context, struct ibv_td_init_attr *init_attr)
 {
+	struct mlx5_context *ctx = to_mctx(context);
 	struct mlx5_td	*td;
 
 	if (init_attr->comp_mask) {
@@ -461,7 +468,12 @@ struct ibv_td *mlx5_alloc_td(struct ibv_context *context, struct ibv_td_init_att
 		return NULL;
 	}
 
-	td->bf = mlx5_attach_dedicated_uar(context, 0);
+	/* Check whether BlueFlame is supported on the device */
+	if (ctx->bf_reg_size)
+		td->bf = mlx5_attach_dedicated_uar(context, 0);
+	else
+		td->bf = ctx->nc_uar;
+
 	if (!td->bf) {
 		free(td);
 		return NULL;
@@ -481,7 +493,8 @@ int mlx5_dealloc_td(struct ibv_td *ib_td)
 	if (atomic_load(&td->refcount) > 1)
 		return EBUSY;
 
-	mlx5_detach_dedicated_uar(ib_td->context, td->bf);
+	if (!td->bf->singleton)
+		mlx5_detach_dedicated_uar(ib_td->context, td->bf);
 	free(td);
 
 	return 0;
@@ -651,6 +664,25 @@ struct ibv_mr *mlx5_reg_mr(struct ibv_pd *pd, void *addr, size_t length,
 	return &mr->vmr.ibv_mr;
 }
 
+struct ibv_mr *mlx5_reg_mr_ex(struct ibv_pd *pd, struct ibv_mr_init_attr *mr_init_attr)
+{
+	struct mlx5_mr *mr;
+	int ret;
+
+	mr = calloc(1, sizeof(*mr));
+	if (!mr)
+		return NULL;
+
+	ret = ibv_cmd_reg_mr_ex(pd, &mr->vmr, mr_init_attr);
+	if (ret) {
+		free(mr);
+		return NULL;
+	}
+	mr->alloc_flags = mr_init_attr->access;
+
+	return &mr->vmr.ibv_mr;
+}
+
 struct ibv_mr *mlx5_reg_dmabuf_mr(struct ibv_pd *pd, uint64_t offset, size_t length,
 				  uint64_t iova, int fd, int acc)
 {
@@ -662,7 +694,7 @@ struct ibv_mr *mlx5_reg_dmabuf_mr(struct ibv_pd *pd, uint64_t offset, size_t len
 		return NULL;
 
 	ret = ibv_cmd_reg_dmabuf_mr(pd, offset, length, iova, fd, acc,
-				    &mr->vmr);
+				    &mr->vmr, NULL);
 	if (ret) {
 		free(mr);
 		return NULL;
@@ -961,6 +993,9 @@ static struct ibv_cq_ex *create_cq(struct ibv_context *context,
 				   int cq_alloc_flags,
 				   struct mlx5dv_cq_init_attr *mlx5cq_attr)
 {
+	DECLARE_COMMAND_BUFFER_LINK(driver_attrs, UVERBS_OBJECT_CQ,
+				    UVERBS_METHOD_CQ_CREATE, 1,
+				    NULL);
 	struct mlx5_create_cq_ex	cmd_ex = {};
 	struct mlx5_create_cq_ex_resp	resp_ex = {};
 	struct mlx5_ib_create_cq       *cmd_drv;
@@ -1123,18 +1158,24 @@ static struct ibv_cq_ex *create_cq(struct ibv_context *context,
 		cmd_drv->flags |= MLX5_IB_CREATE_CQ_FLAGS_REAL_TIME_TS;
 
 	if (mctx->nc_uar) {
-		cmd_drv->flags |= MLX5_IB_CREATE_CQ_FLAGS_UAR_PAGE_INDEX;
-		cmd_drv->uar_page_index = mctx->nc_uar->page_id;
+		if (mctx->nc_uar->page_id >= (1ul << 16)) {
+			fill_attr_in_uint32(driver_attrs, MLX5_IB_ATTR_CREATE_CQ_UAR_INDEX,
+					    mctx->nc_uar->page_id);
+		} else {
+			cmd_drv->flags |= MLX5_IB_CREATE_CQ_FLAGS_UAR_PAGE_INDEX;
+			cmd_drv->uar_page_index = mctx->nc_uar->page_id;
+		}
 	}
 
 	{
 		struct ibv_cq_init_attr_ex cq_attr_ex = *cq_attr;
 
 		cq_attr_ex.cqe = ncqe - 1;
-		ret = ibv_cmd_create_cq_ex(context, &cq_attr_ex, &cq->verbs_cq,
-					   &cmd_ex.ibv_cmd, sizeof(cmd_ex),
-					   &resp_ex.ibv_resp, sizeof(resp_ex),
-					   CREATE_CQ_CMD_FLAGS_TS_IGNORED_EX);
+		ret = ibv_cmd_create_cq_ex2(context, &cq_attr_ex, NULL, &cq->verbs_cq,
+					    &cmd_ex.ibv_cmd, sizeof(cmd_ex),
+					    &resp_ex.ibv_resp, sizeof(resp_ex),
+					    CREATE_CQ_CMD_FLAGS_TS_IGNORED_EX,
+					    driver_attrs);
 	}
 
 	if (ret) {
@@ -1416,6 +1457,7 @@ err_db:
 err_free:
 	free(srq->wrid);
 	mlx5_free_actual_buf(ctx, &srq->buf);
+	free(srq->free_wqe_bitmap);
 
 err:
 	free(srq);
@@ -1467,6 +1509,7 @@ int mlx5_destroy_srq(struct ibv_srq *srq)
 	free(msrq->tm_list);
 	free(msrq->wrid);
 	free(msrq->op);
+	free(msrq->free_wqe_bitmap);
 	free(msrq);
 
 	return 0;
@@ -1754,22 +1797,67 @@ static int mlx5_calc_rwq_size(struct mlx5_context *ctx,
 	return wq_size;
 }
 
+static int mlx5_get_max_recv_wr(struct mlx5_context *ctx,
+				struct ibv_qp_init_attr_ex *attr,
+				struct mlx5dv_qp_init_attr *mlx5_qp_attr,
+				uint32_t *max_recv_wr)
+{
+	if (mlx5_qp_attr && (mlx5_qp_attr->create_flags & MLX5DV_QP_CREATE_OOO_DP) &&
+	    attr->cap.max_recv_wr > 1) {
+		uint32_t max_recv_wr_cap = 0;
+
+		/* OOO-enabled cyclic buffers require double the user requested size. */
+		switch (attr->qp_type) {
+		case IBV_QPT_RC:
+			max_recv_wr_cap = ctx->ooo_recv_wrs_caps.max_rc;
+			break;
+		case IBV_QPT_UC:
+			max_recv_wr_cap = ctx->ooo_recv_wrs_caps.max_uc;
+			break;
+		case IBV_QPT_UD:
+			max_recv_wr_cap = ctx->ooo_recv_wrs_caps.max_ud;
+			break;
+		default:
+			break;
+		}
+
+		if (max_recv_wr_cap) {
+			if (attr->cap.max_recv_wr > max_recv_wr_cap)
+				goto inval_max_wr;
+			*max_recv_wr = attr->cap.max_recv_wr << 1;
+			return 0;
+		}
+	}
+
+	if (attr->cap.max_recv_wr > ctx->max_recv_wr)
+		goto inval_max_wr;
+
+	*max_recv_wr = attr->cap.max_recv_wr;
+	return 0;
+
+inval_max_wr:
+	mlx5_dbg(ctx->dbg_fp, MLX5_DBG_QP, "Invalid max_recv_wr value\n");
+	return -EINVAL;
+}
+
 static int mlx5_calc_rq_size(struct mlx5_context *ctx,
 			     struct ibv_qp_init_attr_ex *attr,
+			     struct mlx5dv_qp_init_attr *mlx5_qp_attr,
 			     struct mlx5_qp *qp)
 {
 	int wqe_size;
 	int wq_size;
 	int scat_spc;
+	int ret;
+	uint32_t max_recv_wr;
 	FILE *fp = ctx->dbg_fp;
 
 	if (!attr->cap.max_recv_wr)
 		return 0;
 
-	if (attr->cap.max_recv_wr > ctx->max_recv_wr) {
-		mlx5_dbg(fp, MLX5_DBG_QP, "\n");
-		return -EINVAL;
-	}
+	ret = mlx5_get_max_recv_wr(ctx, attr, mlx5_qp_attr, &max_recv_wr);
+	if (ret < 0)
+		return ret;
 
 	wqe_size = mlx5_calc_rcv_wqe(ctx, attr, qp);
 	if (wqe_size < 0 || wqe_size > ctx->max_rq_desc_sz) {
@@ -1777,12 +1865,23 @@ static int mlx5_calc_rq_size(struct mlx5_context *ctx,
 		return -EINVAL;
 	}
 
-	wq_size = roundup_pow_of_two(attr->cap.max_recv_wr) * wqe_size;
+	wq_size = roundup_pow_of_two(max_recv_wr) * wqe_size;
 	if (wqe_size) {
 		wq_size = max(wq_size, MLX5_SEND_WQE_BB);
 		qp->rq.wqe_cnt = wq_size / wqe_size;
 		qp->rq.wqe_shift = ilog32(wqe_size - 1);
-		qp->rq.max_post = 1 << ilog32(wq_size / wqe_size - 1);
+		/* If cyclic OOO RQ buffer is used, the max_posts a user can do
+		 * is half the internally allocated size (wqe_cnt).
+		 * This prevents overwriting non-consumed WQEs during the
+		 * execution of mlx5_post_recv(), enforced by mlx5_wq_overflow().
+		 */
+		if (max_recv_wr != attr->cap.max_recv_wr) {
+			/* OOO is applicable only when max_recv_wr and wqe_cnt are larger than 1 */
+			assert(qp->rq.wqe_cnt > 1);
+			qp->rq.max_post = 1 << (ilog32(qp->rq.wqe_cnt - 1) - 1);
+		} else {
+			qp->rq.max_post = 1 << ilog32(qp->rq.wqe_cnt - 1);
+		}
 		scat_spc = wqe_size -
 			(qp->wq_sig ? sizeof(struct mlx5_rwqe_sig) : 0);
 		qp->rq.max_gs = scat_spc / sizeof(struct mlx5_wqe_data_seg);
@@ -1808,7 +1907,7 @@ static int mlx5_calc_wq_size(struct mlx5_context *ctx,
 		return ret;
 
 	result = ret;
-	ret = mlx5_calc_rq_size(ctx, attr, qp);
+	ret = mlx5_calc_rq_size(ctx, attr, mlx5_qp_attr, qp);
 	if (ret < 0)
 		return ret;
 
@@ -2131,7 +2230,8 @@ enum {
 		 MLX5DV_QP_CREATE_DISABLE_SCATTER_TO_CQE |
 		 MLX5DV_QP_CREATE_ALLOW_SCATTER_TO_CQE |
 		 MLX5DV_QP_CREATE_PACKET_BASED_CREDIT_MODE |
-		 MLX5DV_QP_CREATE_SIG_PIPELINING),
+		 MLX5DV_QP_CREATE_SIG_PIPELINING |
+		 MLX5DV_QP_CREATE_OOO_DP),
 };
 
 static int create_dct(struct ibv_context *context,
@@ -2281,6 +2381,29 @@ static void set_qp_operational_state(struct mlx5_qp *qp,
 	}
 }
 
+static int is_qpt_ooo_sup(struct mlx5_context *ctx,
+			  struct ibv_qp_init_attr_ex *attr)
+{
+	if (!(ctx->vendor_cap_flags & MLX5_VENDOR_CAP_FLAGS_OOO_DP))
+		return 0;
+
+	switch (attr->qp_type) {
+	case IBV_QPT_DRIVER:
+		return ctx->ooo_recv_wrs_caps.max_dct;
+	case IBV_QPT_RC:
+		return ctx->ooo_recv_wrs_caps.max_rc;
+	case IBV_QPT_XRC_SEND:
+	case IBV_QPT_XRC_RECV:
+		return ctx->ooo_recv_wrs_caps.max_xrc;
+	case IBV_QPT_UC:
+		return ctx->ooo_recv_wrs_caps.max_uc;
+	case IBV_QPT_UD:
+		return ctx->ooo_recv_wrs_caps.max_ud;
+	default:
+		return 0;
+	}
+}
+
 static struct ibv_qp *create_qp(struct ibv_context *context,
 				struct ibv_qp_init_attr_ex *attr,
 				struct mlx5dv_qp_init_attr *mlx5_qp_attr)
@@ -2412,6 +2535,13 @@ static struct ibv_qp *create_qp(struct ibv_context *context,
 				qp->flags |= MLX5_QP_FLAGS_DRAIN_SIGERR;
 			}
 
+			if (mlx5_qp_attr->create_flags & MLX5DV_QP_CREATE_OOO_DP) {
+				if (!is_qpt_ooo_sup(ctx, attr)) {
+					errno = EOPNOTSUPP;
+					goto err;
+				}
+				qp->flags |= MLX5_QP_FLAGS_OOO_DP;
+			}
 		}
 
 		if (attr->qp_type == IBV_QPT_DRIVER) {
@@ -2627,7 +2757,6 @@ static struct ibv_qp *create_qp(struct ibv_context *context,
 	qp->get_ece = resp_drv->ece_options;
 	map_uuar(context, qp, resp_drv->bfreg_index, bf);
 
-	qp->rq.max_post = qp->rq.wqe_cnt;
 	if (attr->sq_sig_all)
 		qp->sq_signal_bits = MLX5_WQE_CTRL_CQ_UPDATE;
 	else
@@ -2878,8 +3007,78 @@ int mlx5_query_qp(struct ibv_qp *ibqp, struct ibv_qp_attr *attr,
 	init_attr->cap.max_send_sge    = qp->sq.max_gs;
 	init_attr->cap.max_inline_data = qp->max_inline_data;
 
+	if (qp->flags & MLX5_QP_FLAGS_OOO_DP && init_attr->cap.max_recv_wr > 1)
+		init_attr->cap.max_recv_wr = init_attr->cap.max_recv_wr >> 1;
+
 	attr->cap = init_attr->cap;
 
+	return 0;
+}
+
+enum {
+	ALLOC_DMAH_SUPPORTED_COMP_MASK = IBV_DMAH_INIT_ATTR_MASK_CPU_ID |
+					 IBV_DMAH_INIT_ATTR_MASK_PH |
+					 IBV_DMAH_INIT_ATTR_MASK_TPH_MEM_TYPE,
+};
+
+enum {
+	ALLOC_DMAH_ST_COMP_MASK = IBV_DMAH_INIT_ATTR_MASK_CPU_ID |
+				  IBV_DMAH_INIT_ATTR_MASK_TPH_MEM_TYPE,
+};
+
+struct ibv_dmah *
+mlx5_alloc_dmah(struct ibv_context *context, struct ibv_dmah_init_attr *attr)
+{
+	struct verbs_dmah *dmah;
+	int ret;
+
+	if (!check_comp_mask(attr->comp_mask,
+			     ALLOC_DMAH_SUPPORTED_COMP_MASK)) {
+		errno = EOPNOTSUPP;
+		return NULL;
+	}
+
+	if (!(attr->comp_mask & IBV_DMAH_INIT_ATTR_MASK_PH)) {
+		/* PH is a must */
+		errno = EINVAL;
+		return NULL;
+	}
+
+	/* ST is optional; however, partial data for it is not allowed */
+	if (attr->comp_mask & ALLOC_DMAH_ST_COMP_MASK) {
+		if ((attr->comp_mask & ALLOC_DMAH_ST_COMP_MASK) != ALLOC_DMAH_ST_COMP_MASK) {
+			errno = EINVAL;
+			return NULL;
+		}
+	}
+
+	dmah = calloc(1, sizeof(*dmah));
+	if (!dmah) {
+		errno = ENOMEM;
+		return NULL;
+	}
+
+	ret = ibv_cmd_alloc_dmah(context, dmah, attr);
+	if (ret)
+		goto err;
+
+	return &dmah->dmah;
+
+err:
+	free(dmah);
+	return NULL;
+}
+
+int mlx5_dealloc_dmah(struct ibv_dmah *dmah)
+{
+	struct verbs_dmah *vdmah = verbs_get_dmah(dmah);
+	int ret;
+
+	ret = ibv_cmd_free_dmah(vdmah);
+	if (ret)
+		return ret;
+
+	free(vdmah);
 	return 0;
 }
 
@@ -2899,6 +3098,9 @@ static int modify_dct(struct ibv_qp *qp, struct ibv_qp_attr *attr,
 	int ret;
 
 	cmd_ex.ece_options = mqp->set_ece;
+	if (mqp->flags & MLX5_QP_FLAGS_OOO_DP &&
+	    attr_mask & IBV_QP_STATE && attr->qp_state == IBV_QPS_INIT)
+		cmd_ex.comp_mask |= MLX5_IB_MODIFY_QP_OOO_DP;
 	ret = ibv_cmd_modify_qp_ex(qp, attr, attr_mask, &cmd_ex.ibv_cmd,
 				   sizeof(cmd_ex), &resp.ibv_resp,
 				   sizeof(resp));
@@ -3014,8 +3216,12 @@ int mlx5_modify_qp(struct ibv_qp *qp, struct ibv_qp_attr *attr,
 		}
 	}
 
-	if (attr_mask & MLX5_MODIFY_QP_EX_ATTR_MASK || mqp->set_ece) {
+	if (attr_mask & MLX5_MODIFY_QP_EX_ATTR_MASK || mqp->set_ece ||
+	    mqp->flags & MLX5_QP_FLAGS_OOO_DP) {
 		cmd_ex.ece_options = mqp->set_ece;
+		if (mqp->flags & MLX5_QP_FLAGS_OOO_DP &&
+		    attr_mask & IBV_QP_STATE && attr->qp_state == IBV_QPS_INIT)
+			cmd_ex.comp_mask |= MLX5_IB_MODIFY_QP_OOO_DP;
 		ret = ibv_cmd_modify_qp_ex(qp, attr, attr_mask, &cmd_ex.ibv_cmd,
 					   sizeof(cmd_ex), &resp.ibv_resp,
 					   sizeof(resp));
@@ -3588,9 +3794,9 @@ struct ibv_srq *mlx5_create_srq_ex(struct ibv_context *context,
 	 */
 	max_sge = ctx->max_recv_wr / sizeof(struct mlx5_wqe_data_seg);
 	if (attr->attr.max_sge > max_sge) {
-		mlx5_err(ctx->dbg_fp, "%s-%d:max_wr %d, max_srq_recv_wr %d\n",
-			 __func__, __LINE__, attr->attr.max_wr,
-			 ctx->max_srq_recv_wr);
+		mlx5_err(ctx->dbg_fp, "%s-%d:attr.max_sge %d, max_sge %d\n",
+			 __func__, __LINE__, attr->attr.max_sge,
+			 max_sge);
 		errno = EINVAL;
 		goto err;
 	}
@@ -3707,6 +3913,7 @@ err_free_db:
 err_free:
 	free(msrq->wrid);
 	mlx5_free_actual_buf(ctx, &msrq->buf);
+	free(msrq->free_wqe_bitmap);
 
 err:
 	free(msrq);
@@ -3809,6 +4016,7 @@ static void get_hca_general_caps(struct mlx5_context *mctx)
 		HCA_CAP_OPMOD_GET_CUR;
 	uint32_t out[DEVX_ST_SZ_DW(query_hca_cap_out)] = {};
 	uint32_t in[DEVX_ST_SZ_DW(query_hca_cap_in)] = {};
+	int max_cyclic_qp_wr;
 	int ret;
 
 	DEVX_SET(query_hca_cap_in, in, opcode, MLX5_CMD_OP_QUERY_HCA_CAP);
@@ -3895,6 +4103,28 @@ static void get_hca_general_caps(struct mlx5_context *mctx)
 		else
 			mctx->dma_mmo_caps.dma_max_size = MLX5_DMA_MMO_MAX_SIZE;
 	}
+
+	/* OOO-enabled cyclic buffers require double the user requested size.
+	 * XRC and DC are implemented as linked-list buffers. Hence, halving
+	 * is not required.
+	 */
+	max_cyclic_qp_wr = mctx->max_recv_wr > 1 ? mctx->max_recv_wr >> 1 : mctx->max_recv_wr;
+
+	if (DEVX_GET(query_hca_cap_out, out,
+		     capability.cmd_hca_cap.dp_ordering_ooo_all_xrc))
+		mctx->ooo_recv_wrs_caps.max_xrc = mctx->max_recv_wr;
+	if (DEVX_GET(query_hca_cap_out, out,
+		     capability.cmd_hca_cap.dp_ordering_ooo_all_dc))
+		mctx->ooo_recv_wrs_caps.max_dct = mctx->max_recv_wr;
+	if (DEVX_GET(query_hca_cap_out, out,
+		     capability.cmd_hca_cap.dp_ordering_ooo_all_rc))
+		mctx->ooo_recv_wrs_caps.max_rc = max_cyclic_qp_wr;
+	if (DEVX_GET(query_hca_cap_out, out,
+		     capability.cmd_hca_cap.dp_ordering_ooo_all_ud))
+		mctx->ooo_recv_wrs_caps.max_ud = max_cyclic_qp_wr;
+	if (DEVX_GET(query_hca_cap_out, out,
+		     capability.cmd_hca_cap.dp_ordering_ooo_all_uc))
+		mctx->ooo_recv_wrs_caps.max_uc = max_cyclic_qp_wr;
 }
 
 static void get_qos_caps(struct mlx5_context *mctx)
@@ -4088,6 +4318,7 @@ void mlx5_query_device_ctx(struct mlx5_context *mctx)
 		resp.dci_streams_caps.max_log_num_concurent;
 	mctx->dci_streams_caps.max_log_num_errored =
 		resp.dci_streams_caps.max_log_num_errored;
+	mctx->reg_c0 = resp.reg_c0;
 
 	if (resp.flags & MLX5_IB_QUERY_DEV_RESP_FLAGS_CQE_128B_COMP)
 		mctx->vendor_cap_flags |= MLX5_VENDOR_CAP_FLAGS_CQE_128B_COMP;
@@ -4101,6 +4332,9 @@ void mlx5_query_device_ctx(struct mlx5_context *mctx)
 
 	if (resp.flags & MLX5_IB_QUERY_DEV_RESP_FLAGS_SCAT2CQE_DCT)
 		mctx->vendor_cap_flags |= MLX5_VENDOR_CAP_FLAGS_SCAT2CQE_DCT;
+
+	if (resp.flags & MLX5_IB_QUERY_DEV_RESP_FLAGS_OOO_DP)
+		mctx->vendor_cap_flags |= MLX5_VENDOR_CAP_FLAGS_OOO_DP;
 }
 
 static int rwq_sig_enabled(struct ibv_context *context)
@@ -4832,8 +5066,10 @@ static void *dm_mmap(struct ibv_context *context, struct mlx5_dm *mdm,
 
 	set_command(MLX5_IB_MMAP_DEVICE_MEM, &offset);
 	set_extended_index(page_idx, &offset);
+	mdm->pg_off = page_size * offset;
+
 	return mmap(NULL, act_size, PROT_READ | PROT_WRITE, MAP_SHARED,
-		    context->cmd_fd, page_size * offset);
+		    context->cmd_fd, mdm->pg_off);
 }
 
 static void *_mlx5dv_dm_map_op_addr(struct ibv_dm *dm, uint8_t op)
@@ -4877,6 +5113,72 @@ void *mlx5dv_dm_map_op_addr(struct ibv_dm *dm, uint8_t op)
 	}
 
 	return dvops->dm_map_op_addr(dm, op);
+}
+
+static struct ibv_mr *
+_mlx5dv_reg_dmabuf_mr(struct ibv_pd *pd, uint64_t offset,
+		      size_t length, uint64_t iova, int fd,
+		      int access, int mlx5_access)
+{
+	DECLARE_COMMAND_BUFFER_LINK(driver_attr, UVERBS_OBJECT_MR,
+				    UVERBS_METHOD_REG_DMABUF_MR, 1,
+				    NULL);
+	struct mlx5_mr *mr;
+	int ret;
+
+	mr = calloc(1, sizeof(*mr));
+	if (!mr)
+		return NULL;
+
+	fill_attr_in_uint32(driver_attr, MLX5_IB_ATTR_REG_DMABUF_MR_ACCESS_FLAGS, mlx5_access);
+	ret = ibv_cmd_reg_dmabuf_mr(pd, offset, length, iova, fd, access,
+				    &mr->vmr, driver_attr);
+	if (ret) {
+		free(mr);
+		return NULL;
+	}
+	mr->alloc_flags = access;
+
+	return &mr->vmr.ibv_mr;
+}
+
+struct ibv_mr *mlx5dv_reg_dmabuf_mr(struct ibv_pd *pd, uint64_t offset,
+				    size_t length, uint64_t iova, int fd,
+				    int access, int mlx5_access)
+{
+	struct mlx5_dv_context_ops *dvops = mlx5_get_dv_ops(pd->context);
+
+	if (!dvops || !dvops->reg_dmabuf_mr) {
+		errno = EOPNOTSUPP;
+		return NULL;
+	}
+
+	return dvops->reg_dmabuf_mr(pd, offset, length, iova, fd,
+				    access, mlx5_access);
+}
+
+static int _mlx5dv_get_data_direct_sysfs_path(struct ibv_context *context, char *buf,
+					      size_t buf_len)
+{
+	DECLARE_COMMAND_BUFFER(cmd,
+			       UVERBS_OBJECT_DEVICE,
+			       MLX5_IB_METHOD_GET_DATA_DIRECT_SYSFS_PATH,
+			       1);
+
+	fill_attr_out(cmd, MLX5_IB_ATTR_GET_DATA_DIRECT_SYSFS_PATH, buf, buf_len);
+
+	return execute_ioctl(context, cmd);
+}
+
+int mlx5dv_get_data_direct_sysfs_path(struct ibv_context *context, char *buf,
+				      size_t buf_len)
+{
+	struct mlx5_dv_context_ops *dvops = mlx5_get_dv_ops(context);
+
+	if (!dvops || !dvops->get_data_direct_sysfs_path)
+		return EOPNOTSUPP;
+
+	return dvops->get_data_direct_sysfs_path(context, buf, buf_len);
 }
 
 void mlx5_unimport_dm(struct ibv_dm *ibdm)
@@ -5006,6 +5308,7 @@ _mlx5dv_alloc_dm(struct ibv_context *context,
 	int err;
 
 	if ((mlx5_dm_attr->type != MLX5DV_DM_TYPE_MEMIC) &&
+	    (mlx5_dm_attr->type != MLX5DV_DM_TYPE_ENCAP_SW_ICM) &&
 	    (mlx5_dm_attr->type != MLX5DV_DM_TYPE_STEERING_SW_ICM) &&
 	    (mlx5_dm_attr->type != MLX5DV_DM_TYPE_HEADER_MODIFY_SW_ICM) &&
 	    (mlx5_dm_attr->type != MLX5DV_DM_TYPE_HEADER_MODIFY_PATTERN_SW_ICM)) {
@@ -5087,6 +5390,11 @@ struct ibv_dm *mlx5_alloc_dm(struct ibv_context *context,
 	struct mlx5dv_alloc_dm_attr mlx5_attr = { .type = MLX5DV_DM_TYPE_MEMIC };
 
 	return mlx5dv_alloc_dm(context, dm_attr, &mlx5_attr);
+}
+
+int mlx5_dm_export_dmabuf_fd(struct ibv_dm *ibdm)
+{
+	return ibv_cmd_export_dmabuf_fd(ibdm->context, to_mdm(ibdm)->pg_off);
 }
 
 struct ibv_counters *mlx5_create_counters(struct ibv_context *context,
@@ -5214,7 +5522,8 @@ _mlx5dv_create_flow_matcher(struct ibv_context *context,
 	int ret;
 
 	if (!check_comp_mask(attr->comp_mask,
-			     MLX5DV_FLOW_MATCHER_MASK_FT_TYPE)) {
+			     MLX5DV_FLOW_MATCHER_MASK_FT_TYPE |
+			     MLX5DV_FLOW_MATCHER_MASK_IB_PORT)) {
 		errno = EOPNOTSUPP;
 		return NULL;
 	}
@@ -5226,6 +5535,20 @@ _mlx5dv_create_flow_matcher(struct ibv_context *context,
 	}
 
 	if (attr->type !=  IBV_FLOW_ATTR_NORMAL) {
+		errno = EOPNOTSUPP;
+		goto err;
+	}
+
+	if ((attr->ft_type == MLX5DV_FLOW_TABLE_TYPE_RDMA_TRANSPORT_RX ||
+	     attr->ft_type == MLX5DV_FLOW_TABLE_TYPE_RDMA_TRANSPORT_TX) &&
+	    !(attr->comp_mask & MLX5DV_FLOW_MATCHER_MASK_IB_PORT)) {
+		errno = EINVAL;
+		goto err;
+	}
+
+	if (attr->comp_mask & MLX5DV_FLOW_MATCHER_MASK_IB_PORT &&
+	    (attr->ft_type != MLX5DV_FLOW_TABLE_TYPE_RDMA_TRANSPORT_RX &&
+	     attr->ft_type != MLX5DV_FLOW_TABLE_TYPE_RDMA_TRANSPORT_TX)) {
 		errno = EOPNOTSUPP;
 		goto err;
 	}
@@ -5243,6 +5566,10 @@ _mlx5dv_create_flow_matcher(struct ibv_context *context,
 	if (attr->comp_mask & MLX5DV_FLOW_MATCHER_MASK_FT_TYPE)
 		fill_attr_const_in(cmd, MLX5_IB_ATTR_FLOW_MATCHER_FT_TYPE,
 				   attr->ft_type);
+	if (attr->comp_mask & MLX5DV_FLOW_MATCHER_MASK_IB_PORT)
+		fill_attr_in_uint32(cmd, MLX5_IB_ATTR_FLOW_MATCHER_IB_PORT,
+				    attr->ib_port);
+
 	if (attr->flags)
 		fill_attr_const_in(cmd, MLX5_IB_ATTR_FLOW_MATCHER_FLOW_FLAGS,
 				   attr->flags);
@@ -5308,8 +5635,7 @@ struct ibv_flow *
 _mlx5dv_create_flow(struct mlx5dv_flow_matcher *flow_matcher,
 		    struct mlx5dv_flow_match_parameters *match_value,
 		    size_t num_actions,
-		    struct mlx5dv_flow_action_attr actions_attr[],
-		    struct mlx5_flow_action_attr_aux actions_attr_aux[])
+		    struct mlx5dv_flow_action_attr actions_attr[])
 {
 	uint32_t flow_actions[CREATE_FLOW_MAX_FLOW_ACTIONS_SUPPORTED];
 	struct verbs_flow_action *vaction;
@@ -5319,6 +5645,7 @@ _mlx5dv_create_flow(struct mlx5dv_flow_matcher *flow_matcher,
 	bool have_dest_devx = false;
 	bool have_flow_tag = false;
 	bool have_counter = false;
+	bool have_bulk_counter = false;
 	bool have_default = false;
 	bool have_drop = false;
 	int ret;
@@ -5388,20 +5715,13 @@ _mlx5dv_create_flow(struct mlx5dv_flow_matcher *flow_matcher,
 			have_flow_tag = true;
 			break;
 		case MLX5DV_FLOW_ACTION_COUNTERS_DEVX:
-			if (have_counter) {
+			if (have_counter || have_bulk_counter) {
 				errno = EOPNOTSUPP;
 				goto err;
 			}
 			fill_attr_in_objs_arr(cmd,
 					      MLX5_IB_ATTR_CREATE_FLOW_ARR_COUNTERS_DEVX,
 					      &actions_attr[i].obj->handle, 1);
-
-			if (actions_attr_aux &&
-			    actions_attr_aux[i].type == MLX5_FLOW_ACTION_COUNTER_OFFSET)
-				fill_attr_in_ptr_array(cmd,
-						       MLX5_IB_ATTR_CREATE_FLOW_ARR_COUNTERS_DEVX_OFFSET,
-						       &actions_attr_aux[i].offset, 1);
-
 			have_counter = true;
 			break;
 		case MLX5DV_FLOW_ACTION_DEFAULT_MISS:
@@ -5425,6 +5745,19 @@ _mlx5dv_create_flow(struct mlx5dv_flow_matcher *flow_matcher,
 					    MLX5_IB_ATTR_CREATE_FLOW_FLAGS,
 					    MLX5_IB_ATTR_CREATE_FLOW_FLAGS_DROP);
 			have_drop = true;
+			break;
+		case MLX5DV_FLOW_ACTION_COUNTERS_DEVX_WITH_OFFSET:
+			if (have_counter || have_bulk_counter) {
+				errno = EOPNOTSUPP;
+				goto err;
+			}
+			fill_attr_in_objs_arr(cmd,
+					      MLX5_IB_ATTR_CREATE_FLOW_ARR_COUNTERS_DEVX,
+					      &actions_attr[i].bulk_obj.obj->handle, 1);
+			fill_attr_in_ptr_array(cmd,
+					       MLX5_IB_ATTR_CREATE_FLOW_ARR_COUNTERS_DEVX_OFFSET,
+					       &actions_attr[i].bulk_obj.offset, 1);
+			have_bulk_counter = true;
 			break;
 		default:
 			errno = EOPNOTSUPP;
@@ -5465,8 +5798,7 @@ mlx5dv_create_flow(struct mlx5dv_flow_matcher *flow_matcher,
 	return dvops->create_flow(flow_matcher,
 				  match_value,
 				  num_actions,
-				  actions_attr,
-				  NULL);
+				  actions_attr);
 }
 
 static struct mlx5dv_steering_anchor *
@@ -6062,6 +6394,29 @@ void mlx5dv_devx_free_uar(struct mlx5dv_devx_uar *dv_devx_uar)
 		return;
 
 	dvops->devx_free_uar(dv_devx_uar);
+}
+
+static int
+_mlx5dv_devx_uar_export_dmabuf_fd(struct mlx5dv_devx_uar *dv_devx_uar)
+{
+	struct mlx5_devx_uar *uar = container_of(dv_devx_uar, struct mlx5_devx_uar,
+						 dv_devx_uar);
+
+	return ibv_cmd_export_dmabuf_fd(uar->context, dv_devx_uar->mmap_off);
+}
+
+int mlx5dv_devx_uar_export_dmabuf_fd(struct mlx5dv_devx_uar *dv_devx_uar)
+{
+	struct mlx5_devx_uar *uar = container_of(dv_devx_uar, struct mlx5_devx_uar,
+						 dv_devx_uar);
+	struct mlx5_dv_context_ops *dvops = mlx5_get_dv_ops(uar->context);
+
+	if (!dvops || !dvops->devx_uar_export_dmabuf_fd) {
+		errno = EOPNOTSUPP;
+		return -1;
+	}
+
+	return dvops->devx_uar_export_dmabuf_fd(dv_devx_uar);
 }
 
 static int _mlx5dv_devx_query_eqn(struct ibv_context *context,
@@ -7829,6 +8184,7 @@ void mlx5_set_dv_ctx_ops(struct mlx5_dv_context_ops *ops)
 
 	ops->devx_alloc_uar = _mlx5dv_devx_alloc_uar;
 	ops->devx_free_uar = _mlx5dv_devx_free_uar;
+	ops->devx_uar_export_dmabuf_fd = _mlx5dv_devx_uar_export_dmabuf_fd;
 
 	ops->devx_umem_reg = _mlx5dv_devx_umem_reg;
 	ops->devx_umem_reg_ex = _mlx5dv_devx_umem_reg_ex;
@@ -7874,4 +8230,7 @@ void mlx5_set_dv_ctx_ops(struct mlx5_dv_context_ops *ops)
 
 	ops->create_steering_anchor = _mlx5dv_create_steering_anchor;
 	ops->destroy_steering_anchor = _mlx5dv_destroy_steering_anchor;
+
+	ops->reg_dmabuf_mr = _mlx5dv_reg_dmabuf_mr;
+	ops->get_data_direct_sysfs_path = _mlx5dv_get_data_direct_sysfs_path;
 }

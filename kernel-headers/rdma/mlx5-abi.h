@@ -37,6 +37,7 @@
 #include <linux/types.h>
 #include <linux/if_ether.h>	/* For ETH_ALEN. */
 #include <rdma/ib_user_ioctl_verbs.h>
+#include <rdma/mlx5_user_ioctl_verbs.h>
 
 enum {
 	MLX5_QP_FLAG_SIGNATURE		= 1 << 0,
@@ -251,6 +252,7 @@ enum mlx5_ib_query_dev_resp_flags {
 	MLX5_IB_QUERY_DEV_RESP_FLAGS_CQE_128B_PAD  = 1 << 1,
 	MLX5_IB_QUERY_DEV_RESP_PACKET_BASED_CREDIT_MODE = 1 << 2,
 	MLX5_IB_QUERY_DEV_RESP_FLAGS_SCAT2CQE_DCT = 1 << 3,
+	MLX5_IB_QUERY_DEV_RESP_FLAGS_OOO_DP = 1 << 4,
 };
 
 enum mlx5_ib_tunnel_offloads {
@@ -275,6 +277,7 @@ struct mlx5_ib_query_device_resp {
 	__u32	tunnel_offloads_caps; /* enum mlx5_ib_tunnel_offloads */
 	struct  mlx5_ib_dci_streams_caps dci_streams_caps;
 	__u16 reserved;
+	struct mlx5_ib_uapi_reg reg_c0;
 };
 
 enum mlx5_ib_create_cq_flags {
@@ -350,7 +353,7 @@ enum mlx5_rx_hash_function_flags {
 };
 
 /*
- * RX Hash flags, these flags allows to set which incoming packet's field should
+ * RX Hash flags, these flags allow setting which incoming packet's field should
  * participates in RX Hash. Each flag represent certain packet's field,
  * when the flag is set the field that is represented by the flag will
  * participate in RX Hash calculation.
@@ -435,6 +438,10 @@ struct mlx5_ib_burst_info {
 	__u32       max_burst_sz;
 	__u16       typical_pkt_sz;
 	__u16       reserved;
+};
+
+enum mlx5_ib_modify_qp_mask {
+	MLX5_IB_MODIFY_QP_OOO_DP = 1 << 0,
 };
 
 struct mlx5_ib_modify_qp {

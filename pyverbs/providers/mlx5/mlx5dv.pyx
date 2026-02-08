@@ -1,9 +1,9 @@
 # SPDX-License-Identifier: (GPL-2.0 OR Linux-OpenIB)
 # Copyright (c) 2019 Mellanox Technologies, Inc. All rights reserved. See COPYING file
 
-from libc.stdint cimport uintptr_t, uint8_t, uint16_t, uint32_t
+from libc.stdint cimport uintptr_t, uint8_t, uint16_t, uint32_t, uint64_t
 from libc.string cimport memcpy, memset
-from libc.stdlib cimport calloc, free
+from libc.stdlib cimport calloc, free ,malloc
 from posix.mman cimport munmap
 import logging
 import weakref
@@ -14,7 +14,7 @@ from pyverbs.providers.mlx5.mlx5dv_crypto cimport Mlx5CryptoLoginAttr, Mlx5Crypt
 from pyverbs.pyverbs_error import PyverbsUserError, PyverbsRDMAError, PyverbsError
 from pyverbs.providers.mlx5.dr_action cimport DrActionFlowCounter, DrActionDestTir
 from pyverbs.providers.mlx5.mlx5dv_sched cimport Mlx5dvSchedLeaf
-cimport pyverbs.providers.mlx5.mlx5dv_enums as dve
+cimport pyverbs.providers.mlx5.mlx5_enums as dve
 cimport pyverbs.providers.mlx5.libmlx5 as dv
 from pyverbs.mem_alloc import posix_memalign
 from pyverbs.qp cimport QPInitAttrEx, QPEx
@@ -24,7 +24,7 @@ from pyverbs.wr cimport copy_sg_array
 cimport pyverbs.libibverbs_enums as e
 from pyverbs.cq cimport CqInitAttrEx
 cimport pyverbs.libibverbs as v
-from pyverbs.device cimport DM
+from pyverbs.device cimport DM, FdArr
 from pyverbs.addr cimport AH
 from pyverbs.pd cimport PD
 
@@ -130,10 +130,13 @@ cdef class Mlx5DVContextAttr(PyverbsObject):
     Represent mlx5dv_context_attr struct. This class is used to open an mlx5
     device.
     """
-    def __init__(self, flags=0, comp_mask=0):
+    def __init__(self, flags=0, comp_mask=0, FdArr fds=None):
         super().__init__()
         self.attr.flags = flags
         self.attr.comp_mask = comp_mask
+        if fds is not None:
+            self.attr.fds = &fds.attr
+        self.fds = fds
 
     def __str__(self):
         print_format = '{:20}: {:<20}\n'
@@ -215,6 +218,27 @@ cdef class Mlx5DevxObj(PyverbsCM):
             free(out_mailbox)
         return out
 
+    def query_async(self, in_, outlen, wr_id, Mlx5DevxCmdComp cmd_comp):
+        """
+        Queries asynchronously the DevX object.
+        :param in_: Bytes of the obj_query command's input data provided in a
+                    device specification format.
+                    (Stream of bytes or __bytes__ is implemented)
+        :param outlen: Expected output length in bytes
+        :param wr_id: Num of command that sent
+        :param cmd_comp: Mlx5DevxCmdComp object
+        :return: Bytes of the command's output
+        """
+        in_bytes = bytes(in_)
+        cdef char *in_mailbox = _prepare_devx_inbox(in_bytes)
+        rc = dv.mlx5dv_devx_obj_query_async(self.obj, in_mailbox, len(in_bytes),
+                                            outlen, wr_id, cmd_comp.cmd_comp)
+        try:
+            if rc:
+                raise PyverbsRDMAError('Failed to query DevX object', rc)
+        finally:
+            free(in_mailbox)
+
     def modify(self, in_, outlen):
         """
         Modifies the DevX object.
@@ -290,6 +314,7 @@ cdef class Mlx5Context(Context):
         self.devx_umems = weakref.WeakSet()
         self.devx_objs = weakref.WeakSet()
         self.devx_eqs = weakref.WeakSet()
+        self.cmd_comps = weakref.WeakSet()
 
     def query_mlx5_device(self, comp_mask=-1):
         """
@@ -313,7 +338,8 @@ cdef class Mlx5Context(Context):
                 dve.MLX5DV_CONTEXT_MASK_DCI_STREAMS |\
                 dve.MLX5DV_CONTEXT_MASK_WR_MEMCPY_LENGTH |\
                 dve.MLX5DV_CONTEXT_MASK_CRYPTO_OFFLOAD |\
-                dve.MLX5DV_CONTEXT_MASK_MAX_DC_RD_ATOM
+                dve.MLX5DV_CONTEXT_MASK_MAX_DC_RD_ATOM |\
+                dve.MLX5DV_CONTEXT_MASK_OOO_RECV_WRS
         else:
             dv_attr.comp_mask = comp_mask
         rc = dv.mlx5dv_query_device(self.context, &dv_attr.dv)
@@ -445,6 +471,18 @@ cdef class Mlx5Context(Context):
             raise PyverbsRDMAError('Failed to query EQN', rc)
         return eqn
 
+    def get_data_direct_sysfs_path(self, length=512):
+        cdef char *buffer = <char *> calloc(1, length)
+        if buffer == NULL:
+            raise MemoryError('Failed to allocate memory')
+        rc = dv.mlx5dv_get_data_direct_sysfs_path(self.context, buffer, length)
+        if rc:
+            free(buffer)
+            raise PyverbsRDMAError('Get data direct sysfs path failed.', rc)
+        buffer_str = str(buffer.decode())
+        free(buffer)
+        return buffer_str
+
     cdef add_ref(self, obj):
         try:
             Context.add_ref(self, obj)
@@ -455,6 +493,8 @@ cdef class Mlx5Context(Context):
                 self.devx_objs.add(obj)
             elif isinstance(obj, Mlx5DevxEq):
                 self.devx_eqs.add(obj)
+            elif isinstance(obj, Mlx5DevxCmdComp):
+                self.cmd_comps.add(obj)
             else:
                 raise PyverbsError('Unrecognized object type')
 
@@ -463,7 +503,8 @@ cdef class Mlx5Context(Context):
 
     cpdef close(self):
         if self.context != NULL:
-            close_weakrefs([self.pps, self.devx_objs, self.devx_umems, self.devx_eqs])
+            close_weakrefs([self.pps, self.devx_objs, self.devx_umems, self.devx_eqs,
+                           self.cmd_comps])
             super(Mlx5Context, self).close()
 
 
@@ -542,6 +583,10 @@ cdef class Mlx5DVContext(PyverbsObject):
     @property
     def max_dc_init_rd_atom(self):
         return self.dv.max_dc_init_rd_atom
+
+    @property
+    def ooo_recv_wrs_caps(self):
+        return self.dv.ooo_recv_wrs_caps
 
     def __str__(self):
         print_format = '{:20}: {:<20}\n'
@@ -1222,7 +1267,8 @@ def context_flags_to_str(flags):
          dve.MLX5DV_CONTEXT_FLAGS_CQE_128B_COMP: 'Support CQE 128B compression',
          dve.MLX5DV_CONTEXT_FLAGS_CQE_128B_PAD: 'Support CQE 128B padding',
          dve.MLX5DV_CONTEXT_FLAGS_PACKET_BASED_CREDIT_MODE:
-         'Support packet based credit mode (in RC QP)'}
+         'Support packet based credit mode (in RC QP)',
+         dve.MLX5DV_CONTEXT_FLAGS_BLUEFLAME: 'Support BlueFlame'}
     return bitmask_to_str(flags, l)
 
 
@@ -1427,24 +1473,46 @@ cdef class Mlx5DmOpAddr(PyverbsCM):
     def unmap(self, length):
         munmap(self.addr, length)
 
+    @staticmethod
+    cdef void _cpy(void *dst, void *src, int length):
+        """
+        Copy data (bytes) from src to dst. To ensure atomicity, copy in a single
+        write operation.
+        :param dst: The address to copy from.
+        :param src: The address to copy to.
+        :param length: Length in bytes. (supports: power of two. up to 8 bytes)
+        """
+        if length == 1:
+            (<uint8_t *> dst)[0] = (<uint8_t *> src)[0]
+        elif length == 2:
+            (<uint16_t *> dst)[0] = (<uint16_t *> src)[0]
+        elif length == 4:
+            (<uint32_t *> dst)[0] = (<uint32_t *> src)[0]
+        elif length == 8:
+            (<uint64_t *> dst)[0] = (<uint64_t *> src)[0]
+        elif length == 16:
+            raise PyverbsUserError('Currently PyVerbs does not support 16 bytes Memic Atomic operations')
+        else:
+            raise PyverbsUserError(f'Memic Atomic operations do not support with length: {length}')
+
     def write(self, data):
         """
-        Writes data (bytes) to the DM operation address using memcpy.
+        Writes data (bytes) to the DM operation address.
         :param data: Bytes of data
         """
-        memcpy(<char *>self.addr, <char *>data, len(data))
+        length = len(data)
+        Mlx5DmOpAddr._cpy(<void *> self.addr, <void *><char *> data, length)
+
 
     def read(self, length):
         """
-        Reads 'length' bytes from the DM operation address using memcpy.
+        Reads 'length' bytes from the DM operation address.
         :param length: Data length to read (in bytes)
         :return: Read data in bytes
         """
-        cdef char *data = <char*> calloc(length, sizeof(char))
-        if data == NULL:
-            raise PyverbsError('Failed to allocate memory')
-        memcpy(<char *>data, <char *>self.addr, length)
-        res = data[:length]
+        cdef void *data = calloc(length, sizeof(char))
+        Mlx5DmOpAddr._cpy(data, <void *>self.addr, length)
+        res = (<char *> data)[:length]
         free(data)
         return res
 
@@ -1491,7 +1559,7 @@ cdef class WqeCtrlSeg(WqeSeg):
         using mlx5dv_set_ctrl_seg, segment values are accessed
         through the getters/setters.
         """
-        self.segment = calloc(sizeof(dv.mlx5_wqe_ctrl_seg), 1)
+        self.segment = calloc(1, sizeof(dv.mlx5_wqe_ctrl_seg))
         self.set_ctrl_seg(pi, opcode, opmod, qp_num, fm_ce_se, ds, signature, imm)
 
     def __str__(self):
@@ -1562,7 +1630,7 @@ cdef class WqeDataSeg(WqeSeg):
         Create a dv.mlx5_wqe_data_seg by allocating it and using
         dv.mlx5dv_set_data_seg with the values received in init
         """
-        self.segment = calloc(sizeof(dv.mlx5_wqe_data_seg), 1)
+        self.segment = calloc(1, sizeof(dv.mlx5_wqe_data_seg))
         self.set_data_seg(length, lkey, addr)
 
     @staticmethod
@@ -1624,7 +1692,7 @@ cdef class Wqe(PyverbsCM):
             self.is_user_addr = False
             allocation_size = sum(map(lambda x: x.sizeof() if isinstance(x, WqeSeg) else len(x),
                                       self.segments))
-            self.addr = calloc(allocation_size, 1)
+            self.addr = calloc(1, allocation_size)
         addr = <uintptr_t>self.addr
         for seg in self.segments:
             if isinstance(seg, WqeSeg):
@@ -1882,4 +1950,50 @@ cdef class Mlx5DevxEq(PyverbsCM):
             if rc:
                 raise PyverbsRDMAError('Failed to destroy a DevX EQ object', rc)
             self.eq = NULL
+            self.context = None
+
+
+cdef class Mlx5DevxCmdComp(PyverbsCM):
+    """
+    Represents mlx5dv_devx_cmd_comp C struct.
+    """
+    def __init__(self, Context context):
+        super().__init__()
+        self.cmd_comp = dv.mlx5dv_devx_create_cmd_comp(context.context)
+        if self.cmd_comp == NULL:
+            raise PyverbsRDMAErrno('Failed to create DevX cmd comp.')
+        self.context = context
+        self.context.add_ref(self)
+
+    def __str__(self):
+        print_format = '{:20}: {:<20}\n'
+        return print_format.format('fd', hex(self.cmd_comp.fd))
+
+    def get_async_cmd_comp(self, cmd_resp_len=1024):
+        # mlx5dv_devx_async_cmd_hdr size is 1uint64_t of wr_id + cmd_resp_len of out_data
+        size = sizeof(uint64_t) + cmd_resp_len
+        cmd_resp = <dv.mlx5dv_devx_async_cmd_hdr*>malloc(size)
+        if not cmd_resp:
+            raise MemoryError('Couldn\'t allocate array for cmd_resp')
+        rc = dv.mlx5dv_devx_get_async_cmd_comp(self.cmd_comp, cmd_resp, cmd_resp_len)
+        if rc != 0:
+            free(cmd_resp)
+            raise PyverbsError('Failed to get devx async event', rc)
+        wr_id = cmd_resp.wr_id
+        out_data = cmd_resp.out_data[:cmd_resp_len]
+        free(cmd_resp)
+        return wr_id, out_data
+
+    @property
+    def fd(self):
+        return self.cmd_comp.fd
+
+    def __dealloc__(self):
+        self.close()
+
+    cpdef close(self):
+        if self.cmd_comp != NULL:
+            self.logger.debug('Closing Mlx5DevxCmdComp')
+            dv.mlx5dv_devx_destroy_cmd_comp(self.cmd_comp)
+            self.cmd_comp = NULL
             self.context = None

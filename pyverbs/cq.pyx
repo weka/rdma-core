@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: (GPL-2.0 OR Linux-OpenIB)
 # Copyright (c) 2019, Mellanox Technologies. All rights reserved.
 import weakref
+from libc.stdint cimport uintptr_t
 
 from pyverbs.pyverbs_error import PyverbsError, PyverbsRDMAError
 from pyverbs.base import PyverbsRDMAErrno
@@ -68,6 +69,10 @@ cdef class CompChannel(PyverbsCM):
     cdef add_ref(self, obj):
         if isinstance(obj, CQ) or isinstance(obj, CQEX):
             self.cqs.add(obj)
+
+    @property
+    def fd(self):
+        return self.cc.fd
 
 
 cdef class CQ(PyverbsCM):
@@ -208,6 +213,10 @@ cdef class CQ(PyverbsCM):
     def cqe(self):
         return self.cq.cqe
 
+    @property
+    def cq(self):
+       return <uintptr_t>self.cq
+
 
 cdef class CqInitAttrEx(PyverbsObject):
     def __init__(self, cqe = 100, CompChannel channel = None, comp_vector = 0,
@@ -315,6 +324,7 @@ cdef class CQEX(PyverbsCM):
         super().__init__()
         self.qps = weakref.WeakSet()
         self.srqs = weakref.WeakSet()
+        self.wqs = weakref.WeakSet()
         if self.cq != NULL:
             # Leave CQ initialization to the provider
             return
@@ -336,6 +346,8 @@ cdef class CQEX(PyverbsCM):
             self.qps.add(obj)
         elif isinstance(obj, SRQ):
             self.srqs.add(obj)
+        elif isinstance(obj, WQ):
+            self.wqs.add(obj)
         else:
             raise PyverbsError('Unrecognized object type')
 
@@ -346,7 +358,7 @@ cdef class CQEX(PyverbsCM):
         if self.cq != NULL:
             if self.logger:
                 self.logger.debug('Closing CQEx')
-            close_weakrefs([self.srqs, self.qps])
+            close_weakrefs([self.srqs, self.qps, self.wqs])
             rc = v.ibv_destroy_cq(<v.ibv_cq*>self.cq)
             if rc != 0:
                 raise PyverbsRDMAError('Failed to destroy CQEX', rc)

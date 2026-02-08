@@ -34,9 +34,11 @@
 #include <endian.h>
 #include <getopt.h>
 #include <stdlib.h>
-#include <string.h>
 #include <stdio.h>
 #include <errno.h>
+#include <unistd.h>
+#include <sys/poll.h>
+#include <sys/eventfd.h>
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <netdb.h>
@@ -108,7 +110,7 @@ struct rping_rdma_info {
  * Control block struct.
  */
 struct rping_cb {
-	int server;			/* 0 iff client */
+	int server;			/* 0 if client */
 	pthread_t cqthread;
 	pthread_t persistent_server_thread;
 	struct ibv_comp_channel *channel;
@@ -140,6 +142,7 @@ struct rping_cb {
 
 	enum test_state state;		/* used for cond/signalling */
 	sem_t sem;
+	sem_t accept_ready;		/* Ready for another conn req */
 
 	struct sockaddr_storage sin;
 	struct sockaddr_storage ssource;
@@ -151,6 +154,7 @@ struct rping_cb {
 	int validate;			/* validate ping data */
 
 	/* CM stuff */
+	int eventfd;
 	pthread_t cmthread;
 	struct rdma_event_channel *cm_channel;
 	struct rdma_cm_id *cm_id;	/* connection on client side,*/
@@ -185,6 +189,7 @@ static int rping_cma_event_handler(struct rdma_cm_id *cma_id,
 		break;
 
 	case RDMA_CM_EVENT_CONNECT_REQUEST:
+		sem_wait(&cb->accept_ready);
 		cb->state = CONNECT_REQUEST;
 		cb->child_cm_id = cma_id;
 		DEBUG_LOG("child cma %p\n", cb->child_cm_id);
@@ -665,18 +670,36 @@ static void *cm_thread(void *arg)
 {
 	struct rping_cb *cb = arg;
 	struct rdma_cm_event *event;
+	struct pollfd pfds[2];
 	int ret;
 
+	pfds[0].fd = cb->eventfd;
+	pfds[0].events = POLLIN;
+	pfds[1].fd = cb->cm_channel->fd;
+	pfds[1].events = POLLIN;
+
 	while (1) {
-		ret = rdma_get_cm_event(cb->cm_channel, &event);
-		if (ret) {
-			perror("rdma_get_cm_event");
+		ret = poll(pfds, 2, -1);
+		if (ret == -1 && errno != EINTR) {
+			perror("poll failed");
 			exit(ret);
+		} else if (ret < 1)
+			continue;
+
+		if (pfds[0].revents & POLLIN)
+			return NULL;
+
+		if (pfds[1].revents & POLLIN) {
+			ret = rdma_get_cm_event(cb->cm_channel, &event);
+			if (ret) {
+				perror("rdma_get_cm_event");
+				exit(ret);
+			}
+			ret = rping_cma_event_handler(event->id, event);
+			rdma_ack_cm_event(event);
+			if (ret)
+				exit(ret);
 		}
-		ret = rping_cma_event_handler(event->id, event);
-		rdma_ack_cm_event(event);
-		if (ret)
-			exit(ret);
 	}
 }
 
@@ -959,6 +982,8 @@ static int rping_run_persistent_server(struct rping_cb *listening_cb)
 		cb = clone_cb(listening_cb);
 		if (!cb)
 			return -1;
+
+		sem_post(&listening_cb->accept_ready);
 
 		ret = pthread_create(&cb->persistent_server_thread, &attr, rping_persistent_server_thread, cb);
 		if (ret) {
@@ -1253,9 +1278,9 @@ static int get_addr(char *dst, struct sockaddr *addr)
 static void usage(const char *name)
 {
 	printf("%s -s [-vVd] [-S size] [-C count] [-a addr] [-p port]\n", 
-	       basename(name));
+	       name);
 	printf("%s -c [-vVd] [-S size] [-C count] [-I addr] -a addr [-p port]\n", 
-	       basename(name));
+	       name);
 	printf("\t-c\t\tclient side\n");
 	printf("\t-I\t\tSource address to bind to for client.\n");
 	printf("\t-s\t\tserver side.  To bind to any address with IPv6 use -a ::0\n");
@@ -1276,6 +1301,7 @@ int main(int argc, char *argv[])
 	int op;
 	int ret = 0;
 	int persistent_server = 0;
+	const uint64_t efdw = 1;
 
 	cb = malloc(sizeof(*cb));
 	if (!cb)
@@ -1288,6 +1314,7 @@ int main(int argc, char *argv[])
 	cb->sin.ss_family = PF_INET;
 	cb->port = htobe16(7174);
 	sem_init(&cb->sem, 0, 0);
+	sem_init(&cb->accept_ready, 0, 1);
 
 	opterr = 0;
 	while ((op = getopt(argc, argv, "a:I:Pp:C:S:t:scvVdq")) != -1) {
@@ -1362,7 +1389,14 @@ int main(int argc, char *argv[])
 		goto out;
 	}
 
-	cb->cm_channel = create_first_event_channel();
+	cb->eventfd = eventfd(0, EFD_NONBLOCK);
+	if (cb->eventfd == -1) {
+		perror("Could not create event FD");
+		ret = errno;
+		goto out;
+	}
+
+	cb->cm_channel = create_event_channel();
 	if (!cb->cm_channel) {
 		ret = errno;
 		goto out;
@@ -1393,6 +1427,10 @@ int main(int argc, char *argv[])
 	DEBUG_LOG("destroy cm_id %p\n", cb->cm_id);
 	rdma_destroy_id(cb->cm_id);
 out2:
+	if (write(cb->eventfd, &efdw, sizeof(efdw)) != sizeof(efdw))
+		fprintf(stderr, "Failed to signal CM thread\n");
+
+	pthread_join(cb->cmthread, NULL);
 	rdma_destroy_event_channel(cb->cm_channel);
 out:
 	free(cb);

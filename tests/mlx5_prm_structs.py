@@ -35,15 +35,25 @@ class DevxOps:
     MLX5_QPC_ST_RC = 0X0
     MLX5_QPC_PM_STATE_MIGRATED = 0x3
     MLX5_CMD_OP_QUERY_HCA_CAP = 0x100
+    MLX5_CMD_OP_QUERY_QOS_CAP = 0xc
+    MLX5_CMD_OP_QUERY_ODP_CAP = 0x2
     MLX5_CMD_OP_ALLOC_FLOW_COUNTER = 0x939
     MLX5_CMD_OP_DEALLOC_FLOW_COUNTER = 0x93a
     MLX5_CMD_OP_QUERY_FLOW_COUNTER = 0x93b
     MLX5_CMD_OP_CREATE_TIR = 0x900
+    MLX5_CMD_OP_CREATE_FLOW_TABLE = 0x930
+    MLX5_CMD_OP_CREATE_FLOW_GROUP = 0x933
+    MLX5_CMD_OP_SET_FLOW_TABLE_ENTRY = 0x936
     MLX5_CMD_OP_CREATE_EQ = 0x301
     MLX5_CMD_OP_MAD_IFC = 0x50d
     MLX5_CMD_OP_ACCESS_REGISTER_PAOS = 0x5006
     MLX5_CMD_OP_ACCESS_REG = 0x805
     MLX5_CMD_OP_CREATE_MKEY = 0x200
+    MLX5_CMD_OP_CREATE_GENERAL_OBJECT = 0xa00
+
+
+class DevxGeneralObjTypes:
+    MLX5_OBJ_TYPE_RDMA_CTRL = 0x0053
 
 
 class ActionType:
@@ -52,8 +62,14 @@ class ActionType:
     COPY_ACTION = 0x3
 
 
+class PRMPacket(Packet):
+
+    def extract_padding(self, p):
+        return "", p
+
+
 # Common
-class SwPas(Packet):
+class SwPas(PRMPacket):
     fields_desc = [
         IntField('pa_h', 0),
         BitField('pa_l', 0, 20),
@@ -62,7 +78,7 @@ class SwPas(Packet):
 
 
 # PD
-class AllocPdIn(Packet):
+class AllocPdIn(PRMPacket):
     fields_desc = [
         ShortField('opcode', DevxOps.MLX5_CMD_OP_ALLOC_PD),
         ShortField('uid', 0),
@@ -72,7 +88,7 @@ class AllocPdIn(Packet):
     ]
 
 
-class AllocPdOut(Packet):
+class AllocPdOut(PRMPacket):
     fields_desc = [
         ByteField('status', 0),
         BitField('reserved1', 0, 24),
@@ -84,7 +100,7 @@ class AllocPdOut(Packet):
 
 
 # CQ
-class CmdInputFieldSelectResizeCq(Packet):
+class CmdInputFieldSelectResizeCq(PRMPacket):
     fields_desc = [
         BitField('reserved1', 0, 28),
         BitField('umem', 0, 1),
@@ -94,7 +110,7 @@ class CmdInputFieldSelectResizeCq(Packet):
     ]
 
 
-class CmdInputFieldSelectModifyCqFields(Packet):
+class CmdInputFieldSelectModifyCqFields(PRMPacket):
     fields_desc = [
         BitField('reserved_0', 0, 26),
         BitField('status', 0, 1),
@@ -106,7 +122,7 @@ class CmdInputFieldSelectModifyCqFields(Packet):
     ]
 
 
-class SwCqc(Packet):
+class SwCqc(PRMPacket):
     fields_desc = [
         BitField('status', 0, 4),
         BitField('as_notify', 0, 1),
@@ -157,7 +173,7 @@ class SwCqc(Packet):
     ]
 
 
-class CreateCqIn(Packet):
+class CreateCqIn(PRMPacket):
     fields_desc = [
         ShortField('opcode', DevxOps.MLX5_CMD_OP_CREATE_CQ),
         ShortField('uid', 0),
@@ -176,7 +192,7 @@ class CreateCqIn(Packet):
     ]
 
 
-class CreateCqOut(Packet):
+class CreateCqOut(PRMPacket):
     fields_desc = [
         ByteField('status', 0),
         BitField('reserved1', 0, 24),
@@ -188,7 +204,7 @@ class CreateCqOut(Packet):
 
 
 # QP
-class SwAds(Packet):
+class SwAds(PRMPacket):
     fields_desc = [
         BitField('fl', 0, 1),
         BitField('free_ar', 0, 1),
@@ -226,7 +242,7 @@ class SwAds(Packet):
     ]
 
 
-class SwQpc(Packet):
+class SwQpc(PRMPacket):
     fields_desc = [
         BitField('state', 0, 4),
         BitField('lag_tx_port_affinity', 0, 4),
@@ -352,7 +368,7 @@ class SwQpc(Packet):
     ]
 
 
-class CreateQpIn(Packet):
+class CreateQpIn(PRMPacket):
     fields_desc = [
         ShortField('opcode', DevxOps.MLX5_CMD_OP_CREATE_QP),
         ShortField('uid', 0),
@@ -376,7 +392,7 @@ class CreateQpIn(Packet):
     ]
 
 
-class CreateQpOut(Packet):
+class CreateQpOut(PRMPacket):
     fields_desc = [
         ByteField('status', 0),
         BitField('reserved1', 0, 24),
@@ -387,7 +403,7 @@ class CreateQpOut(Packet):
     ]
 
 
-class ModifyQpIn(Packet):
+class ModifyQpIn(PRMPacket):
     fields_desc = [
         ShortField('opcode', 0),
         ShortField('uid', 0),
@@ -403,7 +419,7 @@ class ModifyQpIn(Packet):
     ]
 
 
-class ModifyQpOut(Packet):
+class ModifyQpOut(PRMPacket):
     fields_desc = [
         ByteField('status', 0),
         BitField('reserved1', 0, 24),
@@ -412,7 +428,7 @@ class ModifyQpOut(Packet):
     ]
 
 
-class QueryQpIn(Packet):
+class QueryQpIn(PRMPacket):
     fields_desc = [
         ShortField('opcode', DevxOps.MLX5_CMD_OP_QUERY_QP),
         ShortField('uid', 0),
@@ -424,7 +440,7 @@ class QueryQpIn(Packet):
     ]
 
 
-class QueryQpOut(Packet):
+class QueryQpOut(PRMPacket):
     fields_desc = [
         ByteField('status', 0),
         BitField('reserved1', 0, 24),
@@ -441,7 +457,7 @@ class QueryQpOut(Packet):
 
 
 # EQ
-class SwEqc(Packet):
+class SwEqc(PRMPacket):
     fields_desc = [
         BitField('status', 0, 4),
         BitField('reserved1', 0, 9),
@@ -472,7 +488,7 @@ class SwEqc(Packet):
     ]
 
 
-class CreateEqIn(Packet):
+class CreateEqIn(PRMPacket):
     fields_desc = [
         ShortField('opcode', DevxOps.MLX5_CMD_OP_CREATE_EQ),
         ShortField('uid', 0),
@@ -491,7 +507,7 @@ class CreateEqIn(Packet):
     ]
 
 
-class CreateEqOut(Packet):
+class CreateEqOut(PRMPacket):
     fields_desc = [
         ByteField('status', 0),
         BitField('reserved1', 0, 24),
@@ -502,7 +518,7 @@ class CreateEqOut(Packet):
     ]
 
 
-class IbSmp(Packet):
+class IbSmp(PRMPacket):
     fields_desc = [
         ByteField('base_version', 0),
         ByteField('mgmt_class', 0),
@@ -526,7 +542,7 @@ class IbSmp(Packet):
     ]
 
 
-class MadIfcIn(Packet):
+class MadIfcIn(PRMPacket):
     fields_desc = [
         ShortField('opcode', DevxOps.MLX5_CMD_OP_MAD_IFC),
         ShortField('uid', 0),
@@ -542,7 +558,7 @@ class MadIfcIn(Packet):
     ]
 
 
-class MadIfcOut(Packet):
+class MadIfcOut(PRMPacket):
     fields_desc = [
         ByteField('status', 0),
         BitField('reserved1', 0, 24),
@@ -552,7 +568,7 @@ class MadIfcOut(Packet):
     ]
 
 
-class PaosReg(Packet):
+class PaosReg(PRMPacket):
     fields_desc = [
         ByteField('swid', 0),
         ByteField('local_port', 0),
@@ -570,7 +586,7 @@ class PaosReg(Packet):
     ]
 
 
-class AccessPaosRegisterIn(Packet):
+class AccessPaosRegisterIn(PRMPacket):
     fields_desc = [
         ShortField('opcode', DevxOps.MLX5_CMD_OP_ACCESS_REG),
         ShortField('uid', 0),
@@ -583,7 +599,7 @@ class AccessPaosRegisterIn(Packet):
     ]
 
 
-class AccessPaosRegisterOut(Packet):
+class AccessPaosRegisterOut(PRMPacket):
     fields_desc = [
         ByteField('status', 0),
         BitField('reserved1', 0, 24),
@@ -600,7 +616,7 @@ class EventType:
     PORT_STATE_CHANGE = 0X9
 
 
-class AffiliatedEventHeader(Packet):
+class AffiliatedEventHeader(PRMPacket):
     fields_desc = [
         ShortField('reserved1', 0),
         ShortField('obj_type', 0),
@@ -608,7 +624,7 @@ class AffiliatedEventHeader(Packet):
     ]
 
 
-class CompEvent(Packet):
+class CompEvent(PRMPacket):
     fields_desc = [
         StrFixedLenField('reserved1', None, length=24),
         ByteField('reserved2', 0),
@@ -616,7 +632,7 @@ class CompEvent(Packet):
     ]
 
 
-class CqError(Packet):
+class CqError(PRMPacket):
     fields_desc = [
         ByteField('reserved1', 0),
         BitField('cqn', 0, 24),
@@ -627,7 +643,7 @@ class CqError(Packet):
     ]
 
 
-class PortStateChangeEvent(Packet):
+class PortStateChangeEvent(PRMPacket):
     fields_desc = [
         StrFixedLenField('reserved1', None, length=8),
         BitField('port_num', 0, 4),
@@ -636,7 +652,7 @@ class PortStateChangeEvent(Packet):
     ]
 
 
-class SwEqe(Packet):
+class SwEqe(PRMPacket):
     fields_desc = [
         ByteField('reserved1', 0),
         ByteField('event_type', 0),
@@ -662,7 +678,7 @@ class SwEqe(Packet):
 
 
 # Query HCA VPORT Context
-class QueryHcaVportContextIn(Packet):
+class QueryHcaVportContextIn(PRMPacket):
     fields_desc = [
         ShortField('opcode', DevxOps.MLX5_CMD_OP_QUERY_HCA_VPORT_CONTEXT),
         ShortField('uid', 0),
@@ -676,7 +692,7 @@ class QueryHcaVportContextIn(Packet):
     ]
 
 
-class HcaVportContext(Packet):
+class HcaVportContext(PRMPacket):
     fields_desc = [
         IntField('field_select', 0),
         StrFixedLenField('reserved1', None, length=28),
@@ -716,7 +732,7 @@ class HcaVportContext(Packet):
     ]
 
 
-class QueryHcaVportContextOut(Packet):
+class QueryHcaVportContextOut(PRMPacket):
     fields_desc = [
         ByteField('status', 0),
         BitField('reserved1', 0, 24),
@@ -727,7 +743,7 @@ class QueryHcaVportContextOut(Packet):
 
 
 # Query HCA VPORT GID
-class QueryHcaVportGidIn(Packet):
+class QueryHcaVportGidIn(PRMPacket):
     fields_desc = [
         ShortField('opcode', DevxOps.MLX5_CMD_OP_QUERY_HCA_VPORT_GID),
         ShortField('uid', 0),
@@ -742,14 +758,14 @@ class QueryHcaVportGidIn(Packet):
     ]
 
 
-class IbGidCmd(Packet):
+class IbGidCmd(PRMPacket):
     fields_desc = [
         LongField('prefix', 0),
         LongField('guid', 0),
     ]
 
 
-class QueryHcaVportGidOut(Packet):
+class QueryHcaVportGidOut(PRMPacket):
     fields_desc = [
         ByteField('status', 0),
         BitField('reserved1', 0, 24),
@@ -763,6 +779,8 @@ class QueryHcaVportGidOut(Packet):
 
 class QueryHcaCapOp:
     HCA_CAP_2 = 0X20
+    ADV_RDMA_CAP =  0x28
+    HCA_NIC_FLOW_TABLE_CAP = 0x7
 
 
 class QueryHcaCapMod:
@@ -777,7 +795,7 @@ class SendDbrMode:
 
 
 # Query HCA CAP
-class QueryHcaCapIn(Packet):
+class QueryHcaCapIn(PRMPacket):
     fields_desc = [
         ShortField('opcode', DevxOps.MLX5_CMD_OP_QUERY_HCA_CAP),
         ShortField('uid', 0),
@@ -790,7 +808,7 @@ class QueryHcaCapIn(Packet):
     ]
 
 
-class CmdHcaCap(Packet):
+class CmdHcaCap(PRMPacket):
     fields_desc = [
         BitField('access_other_hca_roce', 0, 1),
         BitField('reserved1', 0, 30),
@@ -860,7 +878,7 @@ class CmdHcaCap(Packet):
         BitField('log_max_cq', 0, 5),
         ByteField('log_max_eq_sz', 0),
         BitField('relaxed_ordering_write', 0, 1),
-        BitField('relaxed_ordering_read', 0, 1),
+        BitField('relaxed_ordering_read_pci_enabled', 0, 1),
         BitField('log_max_mkey', 0, 6),
         BitField('tunneled_atomic', 0, 1),
         BitField('as_notify', 0, 1),
@@ -1096,7 +1114,9 @@ class CmdHcaCap(Packet):
         ByteField('log_max_mcg', 0),
         BitField('reserved25', 0, 3),
         BitField('log_max_transport_domain', 0, 5),
-        BitField('reserved26', 0, 3),
+        BitField('tir_esw_lb_filter_disable', 0, 1),
+        BitField('reserved26', 0, 1),
+        BitField('relaxed_ordering_read', 0, 1),
         BitField('log_max_pd', 0, 5),
         BitField('reserved27', 0, 11),
         BitField('log_max_xrcd', 0, 5),
@@ -1197,7 +1217,8 @@ class CmdHcaCap(Packet):
         BitField('reserved51', 0, 3),
         BitField('max_geneve_tlv_option_data_len', 0, 5),
         BitField('flex_parser_header_modify', 0, 1),
-        BitField('reserved52', 0, 2),
+        BitField('adv_rdma_cap', 0, 1),
+        BitField('reserved52', 0, 1),
         BitField('log_max_guaranteed_connections', 0, 5),
         BitField('reserved53', 0, 3),
         BitField('log_max_dct_connections', 0, 5),
@@ -1290,7 +1311,7 @@ class CmdHcaCap(Packet):
     ]
 
 
-class QueryCmdHcaCapOut(Packet):
+class QueryCmdHcaCapOut(PRMPacket):
     fields_desc = [
         ByteField('status', 0),
         BitField('reserved1', 0, 24),
@@ -1300,7 +1321,7 @@ class QueryCmdHcaCapOut(Packet):
     ]
 
 
-class FlowTableEntryMatchSetMisc(Packet):
+class FlowTableEntryMatchSetMisc(PRMPacket):
     fields_desc = [
         BitField('gre_c_present', 0, 1),
         BitField('bth_a', 0, 1),
@@ -1348,7 +1369,7 @@ class FlowTableEntryMatchSetMisc(Packet):
     ]
 
 
-class FlowTableEntryMatchSetMisc2(Packet):
+class FlowTableEntryMatchSetMisc2(PRMPacket):
     fields_desc = [
         BitField('outer_first_mpls_label', 0, 20),
         BitField('outer_first_mpls_exp', 0, 3),
@@ -1380,7 +1401,7 @@ class FlowTableEntryMatchSetMisc2(Packet):
     ]
 
 
-class FlowTableEntryMatchSetMisc3(Packet):
+class FlowTableEntryMatchSetMisc3(PRMPacket):
     fields_desc = [
         IntField('inner_tcp_seq_num', 0),
         IntField('outer_tcp_seq_num', 0),
@@ -1410,7 +1431,7 @@ class FlowTableEntryMatchSetMisc3(Packet):
     ]
 
 
-class FlowTableEntryMatchSetLyr24(Packet):
+class FlowTableEntryMatchSetLyr24(PRMPacket):
     fields_desc = [
         MACField('smac', '00:00:00:00:00:00'),
         ShortField('ethertype', 0),
@@ -1459,21 +1480,21 @@ class FlowTableEntryMatchSetLyr24(Packet):
     ]
 
 
-class ProgSampleField(Packet):
+class ProgSampleField(PRMPacket):
     fields_desc = [
         IntField('prog_sample_field_value', 0),
         IntField('prog_sample_field_id', 0),
     ]
 
 
-class FlowTableEntryMatchSetMisc4(Packet):
+class FlowTableEntryMatchSetMisc4(PRMPacket):
     fields_desc = [
         PacketListField('prog_sample_field', [ProgSampleField() for x in range(4)], ProgSampleField, count_from=lambda pkt:4),
         StrFixedLenField('reserved1', None, length=32),
     ]
 
 
-class FlowTableEntryMatchSetMisc5(Packet):
+class FlowTableEntryMatchSetMisc5(PRMPacket):
     fields_desc = [
         IntField('macsec_tag_0', 0),
         IntField('macsec_tag_1', 0),
@@ -1487,7 +1508,27 @@ class FlowTableEntryMatchSetMisc5(Packet):
     ]
 
 
-class FlowTableEntryMatchParam(Packet):
+class FlowTableEntryMatchSetMisc6(PRMPacket):
+    fields_desc = [
+        FieldListField('nisp_header', [0 for x in range(10)], IntField('', 0), count_from=lambda pkt:10),
+        StrFixedLenField('reserved1', None, length=24),
+    ]
+
+
+class FlowTableEntryMatchParam(PRMPacket):
+    fields_desc = [
+        PacketField('outer_headers', FlowTableEntryMatchSetLyr24(), FlowTableEntryMatchSetLyr24),
+        PacketField('misc_parameters', FlowTableEntryMatchSetMisc(), FlowTableEntryMatchSetMisc),
+        PacketField('inner_headers', FlowTableEntryMatchSetLyr24(), FlowTableEntryMatchSetLyr24),
+        PacketField('misc_parameters_2', FlowTableEntryMatchSetMisc2(), FlowTableEntryMatchSetMisc2),
+        PacketField('misc_parameters_3', FlowTableEntryMatchSetMisc3(), FlowTableEntryMatchSetMisc3),
+        PacketField('misc_parameters_4', FlowTableEntryMatchSetMisc4(), FlowTableEntryMatchSetMisc4),
+        PacketField('misc_parameters_5', FlowTableEntryMatchSetMisc5(), FlowTableEntryMatchSetMisc5),
+        PacketField('misc_parameters_6', FlowTableEntryMatchSetMisc6(), FlowTableEntryMatchSetMisc6),
+    ]
+
+
+class FlowTableEntryMatchParamSW(PRMPacket):
     fields_desc = [
         PacketField('outer_headers', FlowTableEntryMatchSetLyr24(), FlowTableEntryMatchSetLyr24),
         PacketField('misc_parameters', FlowTableEntryMatchSetMisc(), FlowTableEntryMatchSetMisc),
@@ -1502,7 +1543,7 @@ class FlowTableEntryMatchParam(Packet):
     ]
 
 
-class SetActionIn(Packet):
+class SetActionIn(PRMPacket):
     fields_desc = [
         BitField('action_type', ActionType.SET_ACTION, 4),
         BitField('field', 0, 12),
@@ -1514,7 +1555,7 @@ class SetActionIn(Packet):
     ]
 
 
-class CopyActionIn(Packet):
+class CopyActionIn(PRMPacket):
     fields_desc = [
         BitField('action_type', ActionType.COPY_ACTION, 4),
         BitField('src_field', 0, 12),
@@ -1530,19 +1571,20 @@ class CopyActionIn(Packet):
     ]
 
 
-class AllocFlowCounterIn(Packet):
+class AllocFlowCounterIn(PRMPacket):
     fields_desc = [
         ShortField('opcode', DevxOps.MLX5_CMD_OP_ALLOC_FLOW_COUNTER),
         ShortField('uid', 0),
         ShortField('reserved1', 0),
         ShortField('op_mod', 0),
         IntField('flow_counter_id', 0),
-        BitField('reserved2', 0, 24),
+        BitField('reserved2', 0, 19),
+        BitField('flow_counter_bulk_log_size', 0, 5),
         ByteField('flow_counter_bulk', 0),
     ]
 
 
-class AllocFlowCounterOut(Packet):
+class AllocFlowCounterOut(PRMPacket):
     fields_desc = [
         ByteField('status', 0),
         BitField('reserved1', 0, 24),
@@ -1552,7 +1594,7 @@ class AllocFlowCounterOut(Packet):
     ]
 
 
-class DeallocFlowCounterIn(Packet):
+class DeallocFlowCounterIn(PRMPacket):
     fields_desc = [
         ShortField('opcode', DevxOps.MLX5_CMD_OP_DEALLOC_FLOW_COUNTER),
         ShortField('uid', 0),
@@ -1563,7 +1605,7 @@ class DeallocFlowCounterIn(Packet):
     ]
 
 
-class DeallocFlowCounterOut(Packet):
+class DeallocFlowCounterOut(PRMPacket):
     fields_desc = [
         ByteField('status', 0),
         BitField('reserved1', 0, 24),
@@ -1572,7 +1614,7 @@ class DeallocFlowCounterOut(Packet):
     ]
 
 
-class QueryFlowCounterIn(Packet):
+class QueryFlowCounterIn(PRMPacket):
     fields_desc = [
         ShortField('opcode', DevxOps.MLX5_CMD_OP_QUERY_FLOW_COUNTER),
         ShortField('uid', 0),
@@ -1588,14 +1630,14 @@ class QueryFlowCounterIn(Packet):
     ]
 
 
-class TrafficCounter(Packet):
+class TrafficCounter(PRMPacket):
     fields_desc = [
         LongField('packets', 0),
         LongField('octets', 0),
     ]
 
 
-class QueryFlowCounterOut(Packet):
+class QueryFlowCounterOut(PRMPacket):
     fields_desc = [
         ByteField('status', 0),
         BitField('reserved1', 0, 24),
@@ -1605,7 +1647,24 @@ class QueryFlowCounterOut(Packet):
     ]
 
 
-class RxHashFieldSelect(Packet):
+class QueryBulkFlowCounterOut(PRMPacket):
+    fields_desc = [
+        ByteField('status', 0),
+        BitField('reserved1', 0, 24),
+        IntField('syndrome', 0),
+        StrFixedLenField('reserved2', None, length=4),
+        IntField('num_statistics', 0),
+        PacketListField('flow_statistics', [], TrafficCounter),
+    ]
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+        if self.num_statistics > 0:
+            self.flow_statistics = [TrafficCounter() for _ in range(self.num_statistics)]
+
+
+class RxHashFieldSelect(PRMPacket):
     fields_desc = [
         BitField('l3_prot_type', 0, 1),
         BitField('l4_prot_type', 0, 1),
@@ -1613,7 +1672,7 @@ class RxHashFieldSelect(Packet):
     ]
 
 
-class Tirc(Packet):
+class Tirc(PRMPacket):
     fields_desc = [
         StrFixedLenField('reserved1', None, length=4),
         BitField('disp_type', 0, 4),
@@ -1651,7 +1710,7 @@ class Tirc(Packet):
     ]
 
 
-class CreateTirIn(Packet):
+class CreateTirIn(PRMPacket):
     fields_desc = [
         ShortField('opcode', DevxOps.MLX5_CMD_OP_CREATE_TIR),
         ShortField('uid', 0),
@@ -1662,7 +1721,7 @@ class CreateTirIn(Packet):
     ]
 
 
-class CreateTirOut(Packet):
+class CreateTirOut(PRMPacket):
     fields_desc = [
         ByteField('status', 0),
         BitField('icm_address_63_40', 0, 24),
@@ -1673,7 +1732,7 @@ class CreateTirOut(Packet):
     ]
 
 
-class SwMkc(Packet):
+class SwMkc(PRMPacket):
     fields_desc = [
         BitField('reserved1', 0, 1),
         BitField('free', 0, 1),
@@ -1725,7 +1784,7 @@ class SwMkc(Packet):
     ]
 
 
-class CreateMkeyIn(Packet):
+class CreateMkeyIn(PRMPacket):
     fields_desc = [
         ShortField('opcode', DevxOps.MLX5_CMD_OP_CREATE_MKEY),
         ShortField('uid', 0),
@@ -1748,7 +1807,7 @@ class CreateMkeyIn(Packet):
     ]
 
 
-class CreateMkeyOut(Packet):
+class CreateMkeyOut(PRMPacket):
     fields_desc = [
         ByteField('status', 0),
         BitField('reserved1', 0, 24),
@@ -1759,7 +1818,7 @@ class CreateMkeyOut(Packet):
     ]
 
 
-class MigrationTagVersion0(Packet):
+class MigrationTagVersion0(PRMPacket):
     fields_desc = [
         ShortField('reserved1', 0),
         ShortField('device_id', 0),
@@ -1770,7 +1829,7 @@ class MigrationTagVersion0(Packet):
     ]
 
 
-class CmdHcaCap2(Packet):
+class CmdHcaCap2(PRMPacket):
     fields_desc = [
         StrFixedLenField('reserved1', None, length=16),
         BitField('migratable', 0, 1),
@@ -1869,11 +1928,871 @@ class CmdHcaCap2(Packet):
     ]
 
 
-class QueryCmdHcaCap2Out(Packet):
+class QueryCmdHcaCap2Out(PRMPacket):
     fields_desc = [
         ByteField('status', 0),
         BitField('reserved1', 0, 24),
         IntField('syndrome', 0),
         StrFixedLenField('reserved2', None, length=8),
         PadField(PacketField('capability', CmdHcaCap2(), CmdHcaCap2), 2048, padwith=b"\x00"),
+    ]
+
+
+class FlowMeterParams(PRMPacket):
+    fields_desc = [
+        BitField('valid', 0, 1),
+        BitField('bucket_overflow', 0, 1),
+        BitField('start_color', 0, 2),
+        BitField('both_buckets_on_green', 0, 1),
+        BitField('reserved1', 0, 1),
+        BitField('meter_mode', 0, 2),
+        BitField('reserved2', 0, 24),
+        StrFixedLenField('reserved3', None, length=4),
+        ByteField('cbs_exponent', 0),
+        ByteField('cbs_mantissa', 0),
+        BitField('reserved4', 0, 3),
+        BitField('cir_exponent', 0, 5),
+        ByteField('cir_mantissa', 0),
+        StrFixedLenField('reserved5', None, length=4),
+        ByteField('ebs_exponent', 0),
+        ByteField('ebs_mantissa', 0),
+        BitField('reserved6', 0, 3),
+        BitField('eir_exponent', 0, 5),
+        ByteField('eir_mantissa', 0),
+        StrFixedLenField('reserved7', None, length=12),
+    ]
+
+
+class QosCaps(PRMPacket):
+    fields_desc = [
+        BitField('packet_pacing', 0, 1),
+        BitField('esw_scheduling', 0, 1),
+        BitField('esw_bw_share', 0, 1),
+        BitField('esw_rate_limit', 0, 1),
+        BitField('hll', 0, 1),
+        BitField('packet_pacing_burst_bound', 0, 1),
+        BitField('packet_pacing_typical_size', 0, 1),
+        BitField('flow_meter_old', 0, 1),
+        BitField('nic_sq_scheduling', 0, 1),
+        BitField('nic_bw_share', 0, 1),
+        BitField('nic_rate_limit', 0, 1),
+        BitField('packet_pacing_uid', 0, 1),
+        BitField('log_esw_max_sched_depth', 0, 4),
+        ByteField('log_max_flow_meter', 0),
+        ByteField('flow_meter_reg_id', 0),
+        BitField('wqe_rate_pp', 0, 1),
+        BitField('nic_qp_scheduling', 0, 1),
+        BitField('reserved1', 0, 2),
+        BitField('log_nic_max_sched_depth', 0, 4),
+        BitField('flow_meter', 0, 1),
+        BitField('reserved2', 0, 1),
+        BitField('qos_remap_pp', 0, 1),
+        BitField('log_max_qos_nic_queue_group', 0, 5),
+        ShortField('reserved3', 0),
+        IntField('packet_pacing_max_rate', 0),
+        IntField('packet_pacing_min_rate', 0),
+        BitField('reserved4', 0, 11),
+        BitField('log_esw_max_rate_limit', 0, 5),
+        ShortField('packet_pacing_rate_table_size', 0),
+        ShortField('esw_element_type', 0),
+        ShortField('esw_tsar_type', 0),
+        ShortField('max_qos_para_vport', 0),
+        ShortField('max_qos_para_vport_old', 0),
+        IntField('max_tsar_bw_share', 0),
+        ShortField('nic_element_type', 0),
+        ShortField('nic_tsar_type', 0),
+        BitField('reserved5', 0, 3),
+        BitField('log_meter_aso_granularity', 0, 5),
+        BitField('reserved6', 0, 3),
+        BitField('log_meter_aso_max_alloc', 0, 5),
+        BitField('reserved7', 0, 3),
+        BitField('log_max_num_meter_aso', 0, 5),
+        ByteField('reserved8', 0),
+        BitField('reserved9', 0, 3),
+        BitField('log_max_qos_nic_scheduling_element', 0, 5),
+        BitField('reserved10', 0, 3),
+        BitField('log_max_qos_esw_scheduling_element', 0, 5),
+        ShortField('reserved11', 0),
+        StrFixedLenField('reserved12', None, length=212),
+    ]
+
+
+class QueryQosCapOut(PRMPacket):
+    fields_desc = [
+        ByteField('status', 0),
+        BitField('reserved1', 0, 24),
+        IntField('syndrome', 0),
+        StrFixedLenField('reserved2', None, length=8),
+        PadField(PacketField('capability', QosCaps(), QosCaps), 4096, padwith=b"\x00"),
+    ]
+
+
+class OdpPerTransportServiceCap(PRMPacket):
+    fields_desc = [
+        BitField('send', 0, 1),
+        BitField('receive', 0, 1),
+        BitField('write', 0, 1),
+        BitField('read', 0, 1),
+        BitField('atomic', 0, 1),
+        BitField('rmp', 0, 1),
+        BitField('tag_matching', 0, 1),
+        BitField('reserved1', 0, 25),
+    ]
+
+
+class OdpSchemeCap(PRMPacket):
+    fields_desc = [
+        StrFixedLenField('reserved1', None, length=8),
+        BitField('sig', 0, 1),
+        BitField('cross_vhca_mkey', 0, 1),
+        BitField('klm_null_mkey', 0, 1),
+        BitField('dpa_process_win', 0, 1),
+        BitField('reserved2', 0, 3),
+        BitField('mmo_wqe', 0, 1),
+        BitField('local_mmo_wqe', 0, 1),
+        BitField('aso_wqe', 0, 1),
+        BitField('umr_wqe', 0, 1),
+        BitField('get_psv_wqe', 0, 1),
+        BitField('rget_psv_wqe', 0, 1),
+        BitField('reserved3', 0, 19),
+        StrFixedLenField('reserved4', None, length=4),
+        PacketField('rc_odp_caps', OdpPerTransportServiceCap(), OdpPerTransportServiceCap),
+        PacketField('uc_odp_caps', OdpPerTransportServiceCap(), OdpPerTransportServiceCap),
+        PacketField('ud_odp_caps', OdpPerTransportServiceCap(), OdpPerTransportServiceCap),
+        PacketField('xrc_odp_caps', OdpPerTransportServiceCap(), OdpPerTransportServiceCap),
+        PacketField('dc_odp_caps', OdpPerTransportServiceCap(), OdpPerTransportServiceCap),
+        StrFixedLenField('reserved5', None, length=28),
+    ]
+
+
+class OdpCap(PRMPacket):
+    fields_desc = [
+        PacketField('transport_page_fault_scheme_cap', OdpSchemeCap(), OdpSchemeCap),
+        PacketField('memory_page_fault_scheme_cap', OdpSchemeCap(), OdpSchemeCap),
+        StrFixedLenField('reserved1', None, length=64),
+        BitField('mem_page_fault', 0, 1),
+        BitField('reserved2', 0, 31),
+        StrFixedLenField('reserved3', None, length=60),
+    ]
+
+
+class QueryOdpCapOut(PRMPacket):
+    fields_desc = [
+        ByteField('status', 0),
+        BitField('reserved1', 0, 24),
+        IntField('syndrome', 0),
+        StrFixedLenField('reserved2', None, length=8),
+        PadField(PacketField('capability', OdpCap(), OdpCap), 4096, padwith=b"\x00"),
+    ]
+
+
+class FlowTableFieldsSupported2(PRMPacket):
+    fields_desc = [
+        BitField('reserved1', 0, 10),
+        BitField('lag_rx_port_affinity', 0, 1),
+        BitField('inner_esp_seq_num', 0, 1),
+        BitField('outer_esp_seq_num', 0, 1),
+        BitField('hash_result', 0, 1),
+        BitField('bth_opcode', 0, 1),
+        BitField('tunnel_header_2_3', 0, 1),
+        BitField('tunnel_header_0_1', 0, 1),
+        BitField('macsec_syndrome', 0, 1),
+        BitField('macsec_tag', 0, 1),
+        BitField('outer_lrh_sl', 0, 1),
+        BitField('inner_ipv4_ihl', 0, 1),
+        BitField('outer_ipv4_ihl', 0, 1),
+        BitField('nisp_syndrome', 0, 1),
+        BitField('inner_l3_ok', 0, 1),
+        BitField('inner_l4_ok', 0, 1),
+        BitField('outer_l3_ok', 0, 1),
+        BitField('outer_l4_ok', 0, 1),
+        BitField('nisp_header', 0, 1),
+        BitField('inner_ipv4_checksum_ok', 0, 1),
+        BitField('inner_l4_checksum_ok', 0, 1),
+        BitField('outer_ipv4_checksum_ok', 0, 1),
+        BitField('outer_l4_checksum_ok', 0, 1),
+        StrFixedLenField('reserved2', None, length=12),
+    ]
+
+
+class FlowTableFieldsSupported(PRMPacket):
+    fields_desc = [
+        BitField('outer_dmac', 0, 1),
+        BitField('outer_smac', 0, 1),
+        BitField('outer_ether_type', 0, 1),
+        BitField('outer_ip_version', 0, 1),
+        BitField('outer_first_prio', 0, 1),
+        BitField('outer_first_cfi', 0, 1),
+        BitField('outer_first_vid', 0, 1),
+        BitField('outer_ipv4_ttl', 0, 1),
+        BitField('outer_second_prio', 0, 1),
+        BitField('outer_second_cfi', 0, 1),
+        BitField('outer_second_vid', 0, 1),
+        BitField('outer_ipv6_flow_label', 0, 1),
+        BitField('outer_sip', 0, 1),
+        BitField('outer_dip', 0, 1),
+        BitField('outer_frag', 0, 1),
+        BitField('outer_ip_protocol', 0, 1),
+        BitField('outer_ip_ecn', 0, 1),
+        BitField('outer_ip_dscp', 0, 1),
+        BitField('outer_udp_sport', 0, 1),
+        BitField('outer_udp_dport', 0, 1),
+        BitField('outer_tcp_sport', 0, 1),
+        BitField('outer_tcp_dport', 0, 1),
+        BitField('outer_tcp_flags', 0, 1),
+        BitField('outer_gre_protocol', 0, 1),
+        BitField('outer_gre_key', 0, 1),
+        BitField('outer_vxlan_vni', 0, 1),
+        BitField('outer_geneve_vni', 0, 1),
+        BitField('outer_geneve_oam', 0, 1),
+        BitField('outer_geneve_protocol_type', 0, 1),
+        BitField('outer_geneve_opt_len', 0, 1),
+        BitField('source_vhca_port', 0, 1),
+        BitField('source_eswitch_port', 0, 1),
+        BitField('inner_dmac', 0, 1),
+        BitField('inner_smac', 0, 1),
+        BitField('inner_ether_type', 0, 1),
+        BitField('inner_ip_version', 0, 1),
+        BitField('inner_first_prio', 0, 1),
+        BitField('inner_first_cfi', 0, 1),
+        BitField('inner_first_vid', 0, 1),
+        BitField('inner_ipv4_ttl', 0, 1),
+        BitField('inner_second_prio', 0, 1),
+        BitField('inner_second_cfi', 0, 1),
+        BitField('inner_second_vid', 0, 1),
+        BitField('inner_ipv6_flow_label', 0, 1),
+        BitField('inner_sip', 0, 1),
+        BitField('inner_dip', 0, 1),
+        BitField('inner_frag', 0, 1),
+        BitField('inner_ip_protocol', 0, 1),
+        BitField('inner_ip_ecn', 0, 1),
+        BitField('inner_ip_dscp', 0, 1),
+        BitField('inner_udp_sport', 0, 1),
+        BitField('inner_udp_dport', 0, 1),
+        BitField('inner_tcp_sport', 0, 1),
+        BitField('inner_tcp_dport', 0, 1),
+        BitField('inner_tcp_flags', 0, 1),
+        BitField('outer_tcp_seq_num', 0, 1),
+        BitField('inner_tcp_seq_num', 0, 1),
+        BitField('prog_sample_field', 0, 1),
+        BitField('outer_first_mpls_over_udp_cw', 0, 1),
+        BitField('outer_tcp_ack_num', 0, 1),
+        BitField('inner_tcp_ack_num', 0, 1),
+        BitField('outer_first_mpls_over_gre_cw', 0, 1),
+        BitField('metadata_reg_b', 0, 1),
+        BitField('metadata_reg_a', 0, 1),
+        BitField('geneve_tlv_option_0_data', 0, 1),
+        BitField('geneve_tlv_option_0_exist', 0, 1),
+        BitField('outer_vxlan_gpe_vni', 0, 1),
+        BitField('outer_vxlan_gpe_flags', 0, 1),
+        BitField('outer_vxlan_gpe_next_protocol', 0, 1),
+        BitField('outer_first_mpls_over_gre_ttl', 0, 1),
+        BitField('outer_first_mpls_over_gre_s_bos', 0, 1),
+        BitField('outer_first_mpls_over_gre_exp', 0, 1),
+        BitField('outer_first_mpls_over_gre_label', 0, 1),
+        BitField('outer_first_mpls_over_udp_ttl', 0, 1),
+        BitField('outer_first_mpls_over_udp_s_bos', 0, 1),
+        BitField('outer_first_mpls_over_udp_exp', 0, 1),
+        BitField('outer_first_mpls_over_udp_label', 0, 1),
+        BitField('inner_first_mpls_ttl', 0, 1),
+        BitField('inner_first_mpls_s_bos', 0, 1),
+        BitField('inner_first_mpls_exp', 0, 1),
+        BitField('inner_first_mpls_label', 0, 1),
+        BitField('outer_first_mpls_ttl', 0, 1),
+        BitField('outer_first_mpls_s_bos', 0, 1),
+        BitField('outer_first_mpls_exp', 0, 1),
+        BitField('outer_first_mpls_label', 0, 1),
+        BitField('outer_emd_tag', 0, 1),
+        BitField('inner_esp_spi', 0, 1),
+        BitField('outer_esp_spi', 0, 1),
+        BitField('inner_ipv6_hop_limit', 0, 1),
+        BitField('outer_ipv6_hop_limit', 0, 1),
+        BitField('bth_dst_qp', 0, 1),
+        BitField('inner_first_svlan', 0, 1),
+        BitField('inner_second_svlan', 0, 1),
+        BitField('outer_first_svlan', 0, 1),
+        BitField('outer_second_svlan', 0, 1),
+        BitField('source_sqn', 0, 1),
+        BitField('outer_gre_c_present', 0, 1),
+        BitField('outer_gre_k_present', 0, 1),
+        BitField('outer_gre_s_present', 0, 1),
+        BitField('ipsec_syndrome', 0, 1),
+        BitField('ipsec_next_header', 0, 1),
+        BitField('gtpu_first_ext_dw_0', 0, 1),
+        BitField('gtpu_dw_0', 0, 1),
+        BitField('gtpu_teid', 0, 1),
+        BitField('gtpu_msg_type', 0, 1),
+        BitField('gtpu_flags', 0, 1),
+        BitField('outer_lrh_lid', 0, 1),
+        BitField('outer_grh_flow_label', 0, 1),
+        BitField('outer_grh_tclass', 0, 1),
+        BitField('outer_grh_gid', 0, 1),
+        BitField('outer_bth_pkey', 0, 1),
+        BitField('gtpu_dw_2', 0, 1),
+        BitField('reserved1', 0, 2),
+        BitField('icmpv6_code', 0, 1),
+        BitField('icmp_code', 0, 1),
+        BitField('icmpv6_type', 0, 1),
+        BitField('icmp_type', 0, 1),
+        BitField('icmpv6_header_data', 0, 1),
+        BitField('icmp_header_data', 0, 1),
+        BitField('metadata_reg_c_7', 0, 1),
+        BitField('metadata_reg_c_6', 0, 1),
+        BitField('metadata_reg_c_5', 0, 1),
+        BitField('metadata_reg_c_4', 0, 1),
+        BitField('metadata_reg_c_3', 0, 1),
+        BitField('metadata_reg_c_2', 0, 1),
+        BitField('metadata_reg_c_1', 0, 1),
+        BitField('metadata_reg_c_0', 0, 1),
+    ]
+
+
+class HeaderModifyCapProperties(PRMPacket):
+    fields_desc = [
+        PacketField('set_action_field_support', FlowTableFieldsSupported(),
+                    FlowTableFieldsSupported),
+        PacketField('set_action_field_support_2', FlowTableFieldsSupported2(),
+                    FlowTableFieldsSupported2),
+        PacketField('add_action_field_support', FlowTableFieldsSupported(),
+                    FlowTableFieldsSupported),
+        PacketField('add_action_field_support_2', FlowTableFieldsSupported2(),
+                    FlowTableFieldsSupported2),
+        PacketField('copy_action_field_support', FlowTableFieldsSupported(),
+                    FlowTableFieldsSupported),
+        PacketField('copy_action_field_support_2', FlowTableFieldsSupported2(),
+                    FlowTableFieldsSupported2),
+        StrFixedLenField('reserved1', None, length=32),
+    ]
+
+
+class FlowTablePropLayout(PRMPacket):
+    fields_desc = [
+        BitField('ft_support', 0, 1),
+        BitField('flow_tag', 0, 1),
+        BitField('flow_counter', 0, 1),
+        BitField('flow_modify_en', 0, 1),
+        BitField('modify_root', 0, 1),
+        BitField('identified_miss_table', 0, 1),
+        BitField('flow_table_modify', 0, 1),
+        BitField('reformat', 0, 1),
+        BitField('decap', 0, 1),
+        BitField('reset_root_to_default', 0, 1),
+        BitField('pop_vlan', 0, 1),
+        BitField('push_vlan', 0, 1),
+        BitField('fpga_vendor_acceleration', 0, 1),
+        BitField('pop_vlan_2', 0, 1),
+        BitField('push_vlan_2', 0, 1),
+        BitField('reformat_and_vlan_action', 0, 1),
+        BitField('modify_and_vlan_action', 0, 1),
+        BitField('sw_owner', 0, 1),
+        BitField('reformat_l3_tunnel_to_l2', 0, 1),
+        BitField('reformat_l2_to_l3_tunnel', 0, 1),
+        BitField('reformat_and_modify_action', 0, 1),
+        BitField('ignore_flow_level', 0, 1),
+        BitField('reserved1', 0, 1),
+        BitField('table_miss_action_domain', 0, 1),
+        BitField('termination_table', 0, 1),
+        BitField('reformat_and_fwd_to_table', 0, 1),
+        BitField('forward_vhca_rx_root', 0, 1),
+        BitField('forward_vhca_tx_root', 0, 1),
+        BitField('ipsec_encrypt', 0, 1),
+        BitField('ipsec_decrypt', 0, 1),
+        BitField('sw_owner_v2', 0, 1),
+        BitField('wqe_based_flow_update', 0, 1),
+        BitField('termination_table_raw_traffic', 0, 1),
+        BitField('vlan_and_fwd_to_table', 0, 1),
+        BitField('log_max_ft_size', 0, 6),
+        ByteField('log_max_modify_header_context', 0),
+        ByteField('max_modify_header_actions', 0),
+        ByteField('max_ft_level', 0),
+        BitField('reformat_add_esp_transport', 0, 1),
+        BitField('reformat_l2_to_l3_esp_tunnel', 0, 1),
+        BitField('reformat_add_esp_transport_over_udp', 0, 1),
+        BitField('reformat_del_esp_transport', 0, 1),
+        BitField('reformat_l3_esp_tunnel_to_l2', 0, 1),
+        BitField('reformat_del_esp_transport_over_udp', 0, 1),
+        BitField('execute_aso', 0, 1),
+        BitField('forward_flow_meter', 0, 1),
+        ByteField('log_max_flow_sampler_num', 0),
+        ByteField('metadata_reg_b_width', 0),
+        ByteField('metadata_reg_a_width', 0),
+        BitField('reformat_l2_to_l3_nisp_tunnel', 0, 1),
+        BitField('reformat_l3_nisp_tunnel_to_l2', 0, 1),
+        BitField('reformat_insert', 0, 1),
+        BitField('reformat_remove', 0, 1),
+        BitField('macsec_encrypt', 0, 1),
+        BitField('macsec_decrypt', 0, 1),
+        BitField('nisp_encrypt', 0, 1),
+        BitField('nisp_decrypt', 0, 1),
+        BitField('reformat_add_macsec', 0, 1),
+        BitField('reformat_remove_macsec', 0, 1),
+        BitField('reparse', 0, 1),
+        BitField('reserved2', 0, 1),
+        BitField('cross_vhca_object', 0, 1),
+        BitField('reserved3', 0, 11),
+        ByteField('log_max_ft_num', 0),
+        ShortField('reserved4', 0),
+        ByteField('log_max_flow_counter', 0),
+        ByteField('log_max_destination', 0),
+        BitField('reserved5', 0, 24),
+        ByteField('log_max_flow', 0),
+        StrFixedLenField('reserved6', None, length=8),
+        PacketField('ft_field_support', FlowTableFieldsSupported(), FlowTableFieldsSupported),
+        PacketField('ft_field_bitmask_support', FlowTableFieldsSupported(),
+                    FlowTableFieldsSupported),
+    ]
+
+class AdvRdmaCapabilities(PRMPacket):
+    fields_desc = [
+        BitField('ps_cap', 0, 1),
+        BitField('ps_auto_select', 0, 1),
+        BitField('reserved1', 0, 30),
+        ByteField('rcx_type', 0),
+        BitField('reserved2', 0, 2),
+        BitField('ps_entry_log_max_value', 0, 6),
+        BitField('reserved3', 0, 6),
+        BitField('qp_max_ps_num_entry', 0, 10),
+        ByteField('mp_max_num_queues', 0),
+        ByteField('ps_user_context_max_log_size', 0),
+        ByteField('message_based_qp_and_striding_wq', 0),
+        ByteField('reserved4', 0),
+        ShortField('max_receive_send_message_size_stride', 0),
+        ShortField('reserved5', 0),
+        IntField('max_receive_send_message_size_byte', 0),
+        StrFixedLenField('reserved6', None, length=44),
+        PacketField('rdma_transport_rx_flow_table_properties', FlowTablePropLayout(), FlowTablePropLayout),
+        PacketField('rdma_transport_tx_flow_table_properties', FlowTablePropLayout(), FlowTablePropLayout),
+        PacketField('rdma_transport_rx_ft_field_support_2', FlowTableFieldsSupported2(), FlowTableFieldsSupported2),
+        PacketField('rdma_transport_tx_ft_field_support_2', FlowTableFieldsSupported2(), FlowTableFieldsSupported2),
+        PacketField('rdma_transport_rx_ft_field_bitmask_support_2', FlowTableFieldsSupported2(), FlowTableFieldsSupported2),
+        PacketField('rdma_transport_tx_ft_field_bitmask_support_2', FlowTableFieldsSupported2(), FlowTableFieldsSupported2),
+        PacketField('rdma_transport_rx_header_modify', HeaderModifyCapProperties(), HeaderModifyCapProperties),
+        PacketField('rdma_transport_tx_header_modify', HeaderModifyCapProperties(), HeaderModifyCapProperties),
+    ]
+
+
+class QueryAdvRdmaCapOut(PRMPacket):
+    fields_desc = [
+        ByteField('status', 0),
+        BitField('reserved1', 0, 24),
+        IntField('syndrome', 0),
+        StrFixedLenField('reserved2', None, length=8),
+        PadField(PacketField('capability', AdvRdmaCapabilities(), AdvRdmaCapabilities), 2048, padwith=b"\x00"),
+    ]
+
+
+class FlowTableNicCap(PRMPacket):
+    fields_desc = [
+        BitField('nic_rx_multi_path_tirs', 0, 1),
+        BitField('nic_rx_multi_path_tirs_fts', 0, 1),
+        BitField('allow_sniffer_and_nic_rx_shared_tir', 0, 1),
+        BitField('reserved1', 0, 1),
+        BitField('nic_rx_flow_tag_multipath_en', 0, 1),
+        BitField('ttl_checksum_correction', 0, 1),
+        BitField('nic_rx_rdma_fwd_tir', 0, 1),
+        BitField('sw_owner_reformat_supported', 0, 1),
+        ShortField('reserved2', 0),
+        ByteField('nic_receive_max_steering_depth', 0),
+        BitField('encap_general_header', 0, 1),
+        BitField('reserved3', 0, 10),
+        BitField('log_max_packet_reformat_context', 0, 5),
+        BitField('reserved4', 0, 6),
+        BitField('max_encap_header_size', 0, 10),
+        StrFixedLenField('reserved5', None, length=56),
+        PacketField('flow_table_properties_nic_receive', FlowTablePropLayout(),
+                    FlowTablePropLayout),
+        PacketField('flow_table_properties_nic_receive_rdma', FlowTablePropLayout(),
+                    FlowTablePropLayout),
+        PacketField('flow_table_properties_nic_receive_sniffer', FlowTablePropLayout(),
+                    FlowTablePropLayout),
+        PacketField('flow_table_properties_nic_transmit', FlowTablePropLayout(),
+                    FlowTablePropLayout),
+        PacketField('flow_table_properties_nic_transmit_rdma', FlowTablePropLayout(),
+                    FlowTablePropLayout),
+        PacketField('flow_table_properties_nic_transmit_sniffer', FlowTablePropLayout(),
+                    FlowTablePropLayout),
+        StrFixedLenField('reserved6', None, length=64),
+        PacketField('header_modify_nic_receive', HeaderModifyCapProperties(),
+                    HeaderModifyCapProperties),
+        PacketField('ft_field_support_2_nic_receive', FlowTableFieldsSupported2(),
+                    FlowTableFieldsSupported2),
+        PacketField('ft_field_bitmask_support_2_nic_receive', FlowTableFieldsSupported2(),
+                    FlowTableFieldsSupported2),
+        PacketField('ft_field_support_2_nic_receive_rdma', FlowTableFieldsSupported2(),
+                    FlowTableFieldsSupported2),
+        PacketField('ft_field_bitmask_support_2_nic_receive_rdma', FlowTableFieldsSupported2(),
+                    FlowTableFieldsSupported2),
+        PacketField('ft_field_support_2_nic_receive_sniffer', FlowTableFieldsSupported2(),
+                    FlowTableFieldsSupported2),
+        PacketField('ft_field_bitmask_support_2_nic_receive_sniffer', FlowTableFieldsSupported2(),
+                    FlowTableFieldsSupported2),
+        PacketField('ft_field_support_2_nic_transmit', FlowTableFieldsSupported2(),
+                    FlowTableFieldsSupported2),
+        PacketField('ft_field_bitmask_support_2_nic_transmit', FlowTableFieldsSupported2(),
+                    FlowTableFieldsSupported2),
+        PacketField('ft_field_support_2_nic_transmit_rdma', FlowTableFieldsSupported2(),
+                    FlowTableFieldsSupported2),
+        PacketField('ft_field_bitmask_support_2_nic_transmit_rdma', FlowTableFieldsSupported2(),
+                    FlowTableFieldsSupported2),
+        PacketField('ft_field_support_2_nic_transmit_sniffer', FlowTableFieldsSupported2(),
+                    FlowTableFieldsSupported2),
+        PacketField('ft_field_bitmask_support_2_nic_transmit_sniffer', FlowTableFieldsSupported2(),
+                    FlowTableFieldsSupported2),
+        StrFixedLenField('reserved7', None, length=64),
+        PacketField('header_modify_nic_transmit', HeaderModifyCapProperties(),
+                    HeaderModifyCapProperties),
+        LongField('sw_steering_nic_rx_action_drop_icm_address', 0),
+        LongField('sw_steering_nic_tx_action_drop_icm_address', 0),
+        LongField('sw_steering_nic_tx_action_allow_icm_address', 0),
+        StrFixedLenField('reserved8', None, length=40),
+    ]
+
+
+class QueryCmdHcaNicFlowTableCapOut(PRMPacket):
+    fields_desc = [
+        ByteField('status', 0),
+        BitField('reserved1', 0, 24),
+        IntField('syndrome', 0),
+        StrFixedLenField('reserved2', None, length=8),
+        PadField(PacketField('capability', FlowTableNicCap(), FlowTableNicCap), 2048,
+                 padwith=b"\x00"),
+    ]
+
+
+class RdmaCtrlObj(PRMPacket):
+    fields_desc = [
+        LongField('modify_field_select', 0),
+        StrFixedLenField('reserved1', None, length=6),
+        ShortField('other_vhca_id', 0),
+    ]
+
+
+class GeneralObjCreateParam(PRMPacket):
+    fields_desc = [
+        BitField('alias_object', 0, 1),
+        BitField('reserved1', 0, 2),
+        BitField('log_obj_range', 0, 5),
+        BitField('reserved2', 0, 24),
+    ]
+
+
+class GeneralObjInCmdHdr(PRMPacket):
+    fields_desc = [
+        ShortField('opcode', 0),
+        ShortField('uid', 0),
+        ShortField('vhca_tunnel_id', 0),
+        ShortField('obj_type', 0),
+        IntField('obj_id', 0),
+        ConditionalField(
+            PadField(PacketField('op_param_create', GeneralObjCreateParam(), GeneralObjCreateParam), 4, padwith=b"\x00"),
+            lambda pkt: pkt.opcode == DevxOps.MLX5_CMD_OP_CREATE_GENERAL_OBJECT)
+    ]
+
+
+class GeneralObjOutCmdHdr(PRMPacket):
+    fields_desc = [
+        ByteField('status', 0),
+        BitField('reserved1', 0, 24),
+        IntField('syndrome', 0),
+        IntField('obj_id', 0),
+        StrFixedLenField('reserved2', None, length=4),
+    ]
+
+
+class CreateGeneralObjIn(PRMPacket):
+    fields_desc = [
+        PacketField('general_obj_in_cmd_hdr', GeneralObjInCmdHdr(), GeneralObjInCmdHdr),
+        ConditionalField(
+            PadField(PacketField('obj_context', RdmaCtrlObj(), RdmaCtrlObj), 488, padwith=b"\x00"),
+            lambda pkt: pkt.general_obj_in_cmd_hdr.obj_type == DevxGeneralObjTypes.MLX5_OBJ_TYPE_RDMA_CTRL),
+    ]
+
+
+class CreateGeneralObjOut(PRMPacket):
+    fields_desc = [
+        PacketField('general_obj_out_cmd_hdr', GeneralObjOutCmdHdr(), GeneralObjOutCmdHdr),
+    ]
+
+
+class SwOwnerIcmRootParams(PRMPacket):
+    fields_desc = [
+        LongField('sw_owner_icm_root_1', 0),
+        LongField('sw_owner_icm_root_0', 0),
+    ]
+
+
+class RtcParams(PRMPacket):
+    fields_desc = [
+        IntField('rtc_id_0', 0),
+        IntField('rtc_id_1', 0),
+        StrFixedLenField('reserved1', None, length=8),
+    ]
+
+
+class FlowTableContext(PRMPacket):
+        fields_desc = [
+            BitField("reformat_en", 0, 1),
+            BitField("decap_en", 0, 1),
+            BitField("sw_owner", 0, 1),
+            BitField("termination_table", 0, 1),
+            BitField("table_miss_action", 0, 4),
+            ByteField("level", 0),
+            BitField("rtc_vld", 0, 1),
+            BitField("freeze", 0, 1),
+            BitField("reserved1", 0, 6),
+            ByteField("log_size", 0),
+            ByteField("reserved2", 0),
+            BitField("table_miss_id", 0, 24),
+            ByteField("reserved3", 0),
+            BitField("lag_master_next_table_id", 0, 24),
+            StrFixedLenField('reserved4', None, length=12),
+            ConditionalField(
+                PadField(PacketField('sw_owner_icm_root', SwOwnerIcmRootParams(), SwOwnerIcmRootParams), 16, padwith=b"\x00"),
+                lambda pkt: pkt.sw_owner == 1 or pkt.rtc_vld == 0),
+            ConditionalField(
+                PadField(PacketField('rtc_params', RtcParams(), RtcParams), 16, padwith=b"\x00"),
+                lambda pkt: pkt.rtc_vld == 1),
+    ]
+
+
+class CreateFlowTableIn(PRMPacket):
+    fields_desc = [
+        ShortField('opcode', DevxOps.MLX5_CMD_OP_CREATE_FLOW_TABLE),
+        ShortField('uid', 0),
+        ShortField('vhca_tunnel_id', 0),
+        ShortField('op_mod', 0),
+        BitField('other_vport', 0, 1),
+        BitField('reserved1', 0, 15),
+        ShortField('vport_number', 0),
+        StrFixedLenField('reserved2', None, length=4),
+        ByteField('table_type', 0),
+        BitField('reserved3', 0, 24),
+        StrFixedLenField('reserved4', None, length=4),
+        PacketField('flow_table_context', FlowTableContext(), FlowTableContext),
+    ]
+
+
+class CreateFlowTableOut(PRMPacket):
+    fields_desc = [
+        ByteField('status', 0),
+        BitField('icm_address_63_40', 0, 24),
+        IntField('syndrome', 0),
+        ByteField('icm_address_39_32', 0),
+        BitField('table_id', 0, 24),
+        IntField('icm_address_31_0', 0),
+    ]
+
+
+class CreateFlowGroupIn(PRMPacket):
+    fields_desc = [
+        ShortField('opcode', DevxOps.MLX5_CMD_OP_CREATE_FLOW_GROUP),
+        ShortField('uid', 0),
+        ShortField('vhca_tunnel_id', 0),
+        ShortField('op_mod', 0),
+        BitField('other_vport', 0, 1),
+        BitField('reserved1', 0, 15),
+        ShortField('vport_number', 0),
+        StrFixedLenField('reserved2', None, length=4),
+        ByteField('table_type', 0),
+        BitField('reserved3', 0, 4),
+        BitField('group_type', 0, 4),
+        ShortField('reserved4', 0),
+        ByteField('reserved5', 0),
+        BitField('table_id', 0, 24),
+        BitField('src_esw_owner_vhca_id_valid', 0, 1),
+        BitField('reserved6', 0, 31),
+        IntField('start_flow_index', 0),
+        BitField('reserved7', 0, 18),
+        BitField('log2_match_table_size', 0, 6),
+        BitField('reserved8', 0, 2),
+        BitField('log2_match_table_rows', 0, 6),
+        IntField('end_flow_index', 0),
+        ShortField('reserved9', 0),
+        ShortField('match_definer_id', 0),
+        StrFixedLenField('reserved10', None, length=16),
+        BitField('reserved11', 0, 24),
+        ByteField('match_criteria_enable', 0),
+        PacketField('match_criteria', FlowTableEntryMatchParam(), FlowTableEntryMatchParam),
+        StrFixedLenField('reserved12', None, length=448),
+    ]
+
+
+class CreateFlowGroupOut(PRMPacket):
+    fields_desc = [
+        ByteField('status', 0),
+        BitField('reserved1', 0, 24),
+        IntField('syndrome', 0),
+        ByteField('reserved2', 0),
+        BitField('group_id', 0, 24),
+        StrFixedLenField('reserved3', None, length=4),
+    ]
+
+
+class DestFormatStruct(PRMPacket):
+    fields_desc = [
+        ByteField('destination_type', 0),
+        BitField('destination_id', 0, 24),
+        BitField('dst_esw_owner_vhca_id_valid', 0, 1),
+        BitField('packet_reformat', 0, 1),
+        BitField('reserved1', 0, 6),
+        ByteField('destination_table_type', 0),
+        BitField('reserved2', 0, 1),
+        BitField('dst_esw_owner_vhca_id', 0, 15),
+    ]
+
+
+class ExtendedDestFormat(PRMPacket):
+    fields_desc = [
+        PacketField('extended', DestFormatStruct(), DestFormatStruct),
+        IntField('packet_reformat_id', 0),
+        StrFixedLenField('reserved1', None, length=4),
+    ]
+
+
+class ExtendedFlowCounterList(PRMPacket):
+    fields_desc = [
+        IntField('flow_counter_id', 0),
+        StrFixedLenField('reserved1', None, length=12),
+    ]
+
+
+class DestFormatStruct(PRMPacket):
+    fields_desc = [
+        ByteField('destination_type', 0),
+        BitField('destination_id', 0, 24),
+        BitField('dst_esw_owner_vhca_id_valid', 0, 1),
+        BitField('packet_reformat', 0, 1),
+        BitField('reserved1', 0, 6),
+        ByteField('destination_table_type', 0),
+        BitField('reserved2', 0, 1),
+        BitField('dst_esw_owner_vhca_id', 0, 15),
+    ]
+
+
+class FlowCounterList(PRMPacket):
+    fields_desc = [
+        IntField('flow_counter_id', 0),
+        StrFixedLenField('reserved1', None, length=4),
+    ]
+
+
+class ExeAsoCtrlConnTrack(PRMPacket):
+    fields_desc = [
+        BitField('reserved1', 0, 23),
+        BitField('direction', 0, 1),
+    ]
+
+
+class ExeAsoCtrlFlowHit(PRMPacket):
+    fields_desc = [
+        BitField('reserved1', 0, 14),
+        BitField('read', 0, 1),
+        BitField('flag_id', 0, 9),
+    ]
+
+
+class ExeAsoCtrlFlowMeter(PRMPacket):
+    fields_desc = [
+        BitField('reserved1', 0, 20),
+        BitField('action', 0, 1),
+        BitField('init_color', 0, 2),
+        BitField('meter_id', 0, 1),
+    ]
+
+
+class ExecuteAso(PRMPacket):
+    fields_desc = [
+        BitField('valid', 0, 1),
+        BitField('reserved1', 0, 7),
+        BitField('aso_object_id', 0, 24),
+        BitField('return_reg_id', 0, 4),
+        BitField('aso_type', 0, 4),
+        ConditionalField(
+            PadField(PacketField('flow_meter', ExeAsoCtrlFlowMeter(), ExeAsoCtrlFlowMeter), 4, padwith=b"\x00"),
+            lambda pkt: pkt.aso_type == 0x2),
+        ConditionalField(
+            PadField(PacketField('flow_hit', ExeAsoCtrlFlowHit(), ExeAsoCtrlFlowHit), 4, padwith=b"\x00"),
+            lambda pkt: pkt.aso_type == 0x4),
+        ConditionalField(
+            PadField(PacketField('exe_aso_ctrl', ExeAsoCtrlConnTrack(), ExeAsoCtrlConnTrack), 4, padwith=b"\x00"),
+            lambda pkt: pkt.aso_type == 0x0),
+    ]
+
+
+class VlanTag(PRMPacket):
+    fields_desc = [
+        ShortField('tpid', 0),
+        BitField('pcp', 0, 3),
+        BitField('dei', 0, 1),
+        BitField('vid', 0, 12),
+    ]
+
+
+class FlowContext(PRMPacket):
+    fields_desc = [
+        PacketField('push_vlan_tag', VlanTag(), VlanTag),
+        IntField('group_id', 0),
+        ByteField('reserved1', 0),
+        BitField('flow_tag', 0, 24),
+        ShortField('reserved2', 0),
+        ShortField('action', 0),
+        BitField('extended_destination', 0, 1),
+        BitField('reserved3', 0, 1),
+        BitField('flow_source', 0, 2),
+        BitField('encrypt_decrypt_type', 0, 4),
+        BitField('destination_list_size', 0, 24),
+        ByteField('reserved4', 0),
+        BitField('flow_counter_list_size', 0, 24),
+        IntField('packet_reformat_id', 0),
+        PacketField('push_vlan_2_tag', VlanTag(), VlanTag),
+        IntField('encrypt_decrypt_obj_id', 0),
+        StrFixedLenField('reserved5', None, length=24),
+        PacketField('match_value', FlowTableEntryMatchParam(), FlowTableEntryMatchParam),
+        PacketListField('execute_aso', [ExecuteAso() for x in range(4)], ExecuteAso, count_from=lambda pkt:4),
+        StrFixedLenField('reserved6', None, length=160),
+        ConditionalField(
+            PacketListField('dest_format', [DestFormatStruct() for x in range(0)], DestFormatStruct, count_from=lambda pkt:0),
+            lambda pkt: pkt.destination_list_size > 0),
+        ConditionalField(
+            PacketListField('flow_counter', [FlowCounterList() for x in range(0)], FlowCounterList, count_from=lambda pkt:0),
+            lambda pkt: pkt.flow_counter_list_size > 0),
+        ConditionalField(
+            PacketListField('extended_dest_format', [ExtendedDestFormat() for x in range(0)], ExtendedDestFormat, count_from=lambda pkt:0),
+            lambda pkt: pkt.destination_list_size > 0),
+        ConditionalField(
+            PacketListField('extended_flow_counter', [ExtendedFlowCounterList() for x in range(0)], ExtendedFlowCounterList, count_from=lambda pkt:0),
+            lambda pkt: pkt.flow_counter_list_size > 0),
+    ]
+
+
+class SetFlowTableEntryIn(PRMPacket):
+    fields_desc = [
+        ShortField('opcode', DevxOps.MLX5_CMD_OP_SET_FLOW_TABLE_ENTRY),
+        ShortField('uid', 0),
+        ShortField('vhca_tunnel_id', 0),
+        ShortField('op_mod', 0),
+        BitField('other_vport', 0, 1),
+        BitField('reserved1', 0, 15),
+        ShortField('vport_number', 0),
+        StrFixedLenField('reserved2', None, length=4),
+        ByteField('table_type', 0),
+        BitField('reserved3', 0, 24),
+        ByteField('reserved4', 0),
+        BitField('table_id', 0, 24),
+        BitField('ignore_flow_level', 0, 1),
+        BitField('reserved5', 0, 15),
+        ShortField('modify_enable_mask', 0),
+        StrFixedLenField('reserved6', None, length=4),
+        IntField('flow_index', 0),
+        StrFixedLenField('reserved7', None, length=28),
+        PacketField('flow_context', FlowContext(), FlowContext),
+    ]
+
+
+class SetFlowTableEntryOut(PRMPacket):
+    fields_desc = [
+        ByteField('status', 0),
+        BitField('reserved1', 0, 24),
+        IntField('syndrome', 0),
+        LongField('reserved2', 0)
     ]

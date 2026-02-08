@@ -79,6 +79,16 @@ struct efadv_device_attr {
 	EFADV_DEVICE_ATTR_CAPS_RDMA_WRITE:
 		RDMA write is supported
 
+	EFADV_DEVICE_ATTR_CAPS_UNSOLICITED_WRITE_RECV:
+		Indicates the device has support for creating QPs that can receive unsolicited
+		RDMA write with immediate. RQ with this feature enabled will not consume any work
+		requests in order to receive RDMA write with immediate and a WC generated for such
+		receive will be marked as unsolicited.
+
+	EFADV_DEVICE_ATTR_CAPS_CQ_WITH_EXT_MEM_DMABUF:
+		Indicates that creating CQs with external memory buffers by passing dmabuf is
+		supported.
+
 *max_rdma_size*
 :	Maximum RDMA transfer size in bytes.
 

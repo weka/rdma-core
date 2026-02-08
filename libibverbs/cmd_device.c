@@ -98,12 +98,25 @@ int ibv_cmd_query_port(struct ibv_context *context, uint8_t port_num,
 		copy_query_port_resp_to_port_attr(port_attr,
 						  &resp_ex.legacy_resp);
 		port_attr->port_cap_flags2 = resp_ex.port_cap_flags2;
+		port_attr->active_speed_ex = resp_ex.active_speed_ex;
 		break;
 	default:
 		return ret;
 	};
 
 	return 0;
+}
+
+int ibv_cmd_query_port_speed(struct ibv_context *context, uint32_t port_num,
+			     uint64_t *speed)
+{
+	DECLARE_COMMAND_BUFFER(cmdb, UVERBS_OBJECT_DEVICE,
+			       UVERBS_METHOD_QUERY_PORT_SPEED, 2);
+
+	fill_attr_const_in(cmdb, UVERBS_ATTR_QUERY_PORT_SPEED_PORT_NUM, port_num);
+	fill_attr_out_ptr(cmdb, UVERBS_ATTR_QUERY_PORT_SPEED_RESP, speed);
+
+	return execute_ioctl(context, cmdb);
 }
 
 int ibv_cmd_alloc_async_fd(struct ibv_context *context)
@@ -126,10 +139,11 @@ int ibv_cmd_alloc_async_fd(struct ibv_context *context)
 }
 
 static int cmd_get_context(struct verbs_context *context_ex,
-				struct ibv_command_buffer *link)
+			   struct ibv_fd_arr *fds,
+			   struct ibv_command_buffer *link)
 {
 	DECLARE_FBCMD_BUFFER(cmdb, UVERBS_OBJECT_DEVICE,
-			     UVERBS_METHOD_GET_CONTEXT, 2, link);
+			     UVERBS_METHOD_GET_CONTEXT, 3, link);
 
 	struct ibv_context *context = &context_ex->context;
 	struct verbs_device *verbs_device;
@@ -141,6 +155,10 @@ static int cmd_get_context(struct verbs_context *context_ex,
 			  &num_comp_vectors);
 	fill_attr_out_ptr(cmdb, UVERBS_ATTR_GET_CONTEXT_CORE_SUPPORT,
 			  &core_support);
+
+	if (fds)
+		fill_attr_in_ptr_array(cmdb, UVERBS_ATTR_GET_CONTEXT_FD_ARR,
+				       fds->arr, fds->count);
 
 	/* Using free_context cmd_name as alloc context is not in
 	 * verbs_context_ops while free_context is and doesn't use ioctl
@@ -173,6 +191,7 @@ static int cmd_get_context(struct verbs_context *context_ex,
 
 int ibv_cmd_get_context(struct verbs_context *context_ex,
 			struct ibv_get_context *cmd, size_t cmd_size,
+			struct ibv_fd_arr *fd_arr,
 			struct ib_uverbs_get_context_resp *resp,
 			size_t resp_size)
 {
@@ -180,7 +199,7 @@ int ibv_cmd_get_context(struct verbs_context *context_ex,
 				  UVERBS_METHOD_GET_CONTEXT, cmd, cmd_size,
 				  resp, resp_size);
 
-	return cmd_get_context(context_ex, cmdb);
+	return cmd_get_context(context_ex, fd_arr, cmdb);
 }
 
 int ibv_cmd_query_context(struct ibv_context *context,
