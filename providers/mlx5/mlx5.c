@@ -82,10 +82,12 @@ static const struct verbs_match_ent hca_table[] = {
 	HCA(MELLANOX, 0x101e),	/* ConnectX family mlx5Gen Virtual Function */
 	HCA(MELLANOX, 0x1021),  /* ConnectX-7 */
 	HCA(MELLANOX, 0x1023),  /* ConnectX-8 */
+	/*HCA(MELLANOX, 0x1025),*/  /* ConnectX-9 not enabled */
 	HCA(MELLANOX, 0xa2d2),	/* BlueField integrated ConnectX-5 network controller */
 	HCA(MELLANOX, 0xa2d3),	/* BlueField integrated ConnectX-5 network controller VF */
 	HCA(MELLANOX, 0xa2d6),  /* BlueField-2 integrated ConnectX-6 Dx network controller */
 	HCA(MELLANOX, 0xa2dc),  /* BlueField-3 integrated ConnectX-7 network controller */
+	/*HCA(MELLANOX, 0xa2df),*/  /* BlueField-4 integrated ConnectX-9 network controller */
 	{}
 };
 
