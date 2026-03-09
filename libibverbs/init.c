@@ -440,6 +440,25 @@ static struct verbs_device *try_drivers(struct verbs_sysfs_dev *sysfs_dev)
 {
 	struct ibv_driver *driver;
 	struct verbs_device *dev;
+	int driver_count = 0;
+	FILE *debug_file = fopen("/tmp/rita_rdma_debug.log", "a");
+
+	/* Count and print registered drivers */
+	list_for_each(&driver_list, driver, entry) {
+		fprintf(stderr, "RITA DEBUG: stderr driver_list[%d]: %s\n", driver_count, driver->ops->name);
+		if (debug_file)
+			fprintf(debug_file, "RITA DEBUG: file driver_list[%d]: %s\n", driver_count, driver->ops->name);
+		driver_count++;
+	}
+	fprintf(stderr, "RITA DEBUG: stderr Total drivers registered: %d\n", driver_count);
+	fprintf(stderr, "RITA DEBUG: stderr Trying drivers for sysfs_dev: %s (driver_id=%d)\n",
+	       sysfs_dev->ibdev_name, sysfs_dev->driver_id);
+	if (debug_file) {
+		fprintf(debug_file, "RITA DEBUG: file Total drivers registered: %d\n", driver_count);
+		fprintf(debug_file, "RITA DEBUG: file Trying drivers for sysfs_dev: %s (driver_id=%d)\n",
+		       sysfs_dev->ibdev_name, sysfs_dev->driver_id);
+		fflush(debug_file);
+	}
 
 	/*
 	 * Matching by driver_id takes priority over other match types, do it
@@ -449,18 +468,42 @@ static struct verbs_device *try_drivers(struct verbs_sysfs_dev *sysfs_dev)
 		list_for_each (&driver_list, driver, entry) {
 			if (match_driver_id(driver->ops, sysfs_dev)) {
 				dev = try_driver(driver->ops, sysfs_dev);
-				if (dev)
+				if (dev) {
+					fprintf(stderr, "RITA DEBUG: Matched device %s with driver %s (by driver_id)\n",
+					       sysfs_dev->ibdev_name, driver->ops->name);
+					if (debug_file) {
+						fprintf(debug_file, "RITA DEBUG: file Matched device %s with driver %s (by driver_id)\n",
+						       sysfs_dev->ibdev_name, driver->ops->name);
+						fflush(debug_file);
+						fclose(debug_file);
+					}
 					return dev;
+				}
 			}
 		}
 	}
 
 	list_for_each(&driver_list, driver, entry) {
 		dev = try_driver(driver->ops, sysfs_dev);
-		if (dev)
+		if (dev) {
+			fprintf(stderr, "RITA DEBUG: Matched device %s with driver %s\n",
+			       sysfs_dev->ibdev_name, driver->ops->name);
+			if (debug_file) {
+				fprintf(debug_file, "RITA DEBUG: file Matched device %s with driver %s\n",
+				       sysfs_dev->ibdev_name, driver->ops->name);
+				fflush(debug_file);
+				fclose(debug_file);
+			}
 			return dev;
+		}
 	}
 
+	fprintf(stderr, "RITA DEBUG: stderr No driver matched for device %s\n", sysfs_dev->ibdev_name);
+	if (debug_file) {
+		fprintf(debug_file, "RITA DEBUG: file No driver matched for device %s\n", sysfs_dev->ibdev_name);
+		fflush(debug_file);
+		fclose(debug_file);
+	}
 	return NULL;
 }
 
@@ -556,12 +599,36 @@ int ibverbs_get_device_list(struct list_head *device_list)
 	static int drivers_loaded;
 	unsigned int num_devices = 0;
 	int ret;
+	FILE *debug_file = fopen("/tmp/rita_rdma_debug.log", "a");
+
+	/* Always write to stderr as well */
+	fprintf(stderr, "RITA DEBUG: stderr ibverbs_get_device_list called\n");
+	if (debug_file) {
+		fprintf(debug_file, "RITA DEBUG: file ibverbs_get_device_list called\n");
+		fflush(debug_file);
+	}
 
 	ret = find_sysfs_devs_nl(&sysfs_list);
 	if (ret) {
 		ret = find_sysfs_devs(&sysfs_list);
-		if (ret)
+		if (ret) {
+			if (debug_file) fclose(debug_file);
 			return -ret;
+		}
+	}
+
+	/* Print sysfs devices found */
+	int sysfs_count = 0;
+	list_for_each(&sysfs_list, sysfs_dev, entry) {
+		fprintf(stderr, "RITA DEBUG: stderr sysfs_dev[%d]: %s\n", sysfs_count, sysfs_dev->ibdev_name);
+		if (debug_file)
+			fprintf(debug_file, "RITA DEBUG: file sysfs_dev[%d]: %s\n", sysfs_count, sysfs_dev->ibdev_name);
+		sysfs_count++;
+	}
+	fprintf(stderr, "RITA DEBUG: stderr Total sysfs devices found: %d\n", sysfs_count);
+	if (debug_file) {
+		fprintf(debug_file, "RITA DEBUG: file Total sysfs devices found: %d\n", sysfs_count);
+		fflush(debug_file);
 	}
 
 	if (!list_empty(&sysfs_list)) {
@@ -609,12 +676,24 @@ out:
 	 * driver.
 	 */
 	list_for_each_safe(&sysfs_list, sysfs_dev, next_dev, entry) {
+		fprintf(stderr, "RITA DEBUG: stderr Device %s had no matching driver\n", sysfs_dev->ibdev_name);
+		if (debug_file) {
+			fprintf(debug_file, "RITA DEBUG: file Device %s had no matching driver\n",
+				sysfs_dev->ibdev_name);
+		}
 		if (getenv("IBV_SHOW_WARNINGS")) {
 			fprintf(stderr, PFX
-				"Warning: no userspace device-specific driver found for %s\n",
+				"Warning: stderr no userspace device-specific driver found for %s\n",
 				sysfs_dev->ibdev_name);
 		}
 		free(sysfs_dev);
+	}
+
+	fprintf(stderr, "RITA DEBUG: stderr ibverbs_get_device_list returning %d devices\n", num_devices);
+	if (debug_file) {
+		fprintf(debug_file, "RITA DEBUG: file ibverbs_get_device_list returning %d devices\n", num_devices);
+		fflush(debug_file);
+		fclose(debug_file);
 	}
 
 	return num_devices;

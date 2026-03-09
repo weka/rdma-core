@@ -83,11 +83,26 @@ LATEST_SYMVER_FUNC(ibv_get_device_list, 1_1, "IBVERBS_1.1",
 		goto out;
 	}
 
+	FILE *debug_file = fopen("/tmp/rita_rdma_debug.log", "a");
+	fprintf(stderr, "RITA DEBUG: ibv_get_device_list found %d devices\n", num_devices);
+	if (debug_file) {
+		fprintf(debug_file, "RITA DEBUG: file ibv_get_device_list found %d devices\n", num_devices);
+		fflush(debug_file);
+	}
 	list_for_each(&device_list, device, entry) {
 		l[i] = &device->device;
+		fprintf(stderr, "RITA DEBUG: device[%d] name=%s dev_name=%s ibdev_path=%s\n",
+		       i, device->device.name, device->device.dev_name, device->device.ibdev_path);
+		if (debug_file) {
+			fprintf(debug_file, "RITA DEBUG: file device[%d] name=%s dev_name=%s ibdev_path=%s\n",
+			       i, device->device.name, device->device.dev_name, device->device.ibdev_path);
+			fflush(debug_file);
+		}
 		ibverbs_device_hold(l[i]);
 		i++;
 	}
+	if (debug_file)
+		fclose(debug_file);
 	if (num)
 		*num = num_devices;
 out:

@@ -106,11 +106,16 @@ static int find_uverbs_nl_cb(struct nl_msg *msg, void *data)
 	 * current kernels set them to 0
 	 */
 	sysfs_dev->abi_ver = nla_get_u64(tb[RDMA_NLDEV_ATTR_CHARDEV_ABI]);
-	if (tb[RDMA_NLDEV_ATTR_UVERBS_DRIVER_ID])
+	if (tb[RDMA_NLDEV_ATTR_UVERBS_DRIVER_ID]) {
 		sysfs_dev->driver_id =
 			nla_get_u32(tb[RDMA_NLDEV_ATTR_UVERBS_DRIVER_ID]);
-	else
+		fprintf(stderr, "RITA DEBUG: find_uverbs_nl_cb  Device %s got driver_id=%d from netlink\n",
+				sysfs_dev->ibdev_name, sysfs_dev->driver_id);
+	} else {
 		sysfs_dev->driver_id = RDMA_DRIVER_UNKNOWN;
+		fprintf(stderr, "RITA DEBUG: find_uverbs_nl_cb Device %s has NO driver_id attribute, set to UNKNOWN\n",
+				sysfs_dev->ibdev_name);
+	}
 
 	/* Convert from huge_encode_dev to whatever glibc uses */
 	cdev64 = nla_get_u64(tb[RDMA_NLDEV_ATTR_CHARDEV]);

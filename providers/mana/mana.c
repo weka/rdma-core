@@ -27,6 +27,7 @@ DECLARE_DRV_CMD(mana_alloc_pd, IB_USER_VERBS_CMD_ALLOC_PD, empty, empty);
 
 static const struct verbs_match_ent hca_table[] = {
 	VERBS_DRIVER_ID(RDMA_DRIVER_MANA),
+	VERBS_NAME_MATCH("manae", NULL),  /* Ethernet interface */
 	{},
 };
 
