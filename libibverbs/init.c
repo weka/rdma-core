@@ -451,6 +451,7 @@ static struct verbs_device *try_drivers(struct verbs_sysfs_dev *sysfs_dev)
 	if (sysfs_dev->driver_id != RDMA_DRIVER_UNKNOWN) {
 		fprintf(stderr, "Rita DEBUG: Trying driver_id match for %s (id=%d)\n",
 			sysfs_dev->ibdev_name, sysfs_dev->driver_id);
+        fprintf(stderr, "Ritamana  RDMA_DRIVER_MANA = %d\n", RDMA_DRIVER_MANA);
 		list_for_each (&driver_list, driver, entry) {
 			if (match_driver_id(driver->ops, sysfs_dev)) {
 				fprintf(stderr, "Rita DEBUG: Matched driver_id, trying driver ops\n");

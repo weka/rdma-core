@@ -231,6 +231,7 @@ struct ib_uverbs_qp_cap {
 	__u32 max_inline_data;
 };
 
+/* MANA should be at position 22 to match kernel 6.8+ */
 enum rdma_driver_id {
 	RDMA_DRIVER_UNKNOWN,
 	RDMA_DRIVER_MLX5,
