@@ -39,7 +39,7 @@
 #include <sys/mman.h>
 
 #include "main.h"
-#include "abi.h"
+#include "bnxt_re-abi.h"
 #include "bnxt_re_dv.h"
 #include "./verbs.h"
 #include "bnxt_re_dv_internal.h"

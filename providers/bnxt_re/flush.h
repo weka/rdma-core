@@ -1,5 +1,7 @@
 /*
- * Copyright (c) 2015-2024, Broadcom. All rights reserved.  The term
+ * Broadcom NetXtreme-E User Space RoCE driver
+ *
+ * Copyright (c) 2015-2017, Broadcom. All rights reserved.  The term
  * Broadcom refers to Broadcom Limited and/or its subsidiaries.
  *
  * This software is available to you under a choice of one of two
@@ -31,22 +33,53 @@
  * OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN
  * IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  *
- * Description: current release version information
+ * Description: A few wrappers for flush queue management
  */
 
-#ifndef __BNXT_RE_VERSION_H__
-#define __BNXT_RE_VERSION_H__
+#ifndef __FLUSH_H__
+#define __FLUSH_H__
 
-#define MAJOR_VERSION "238"
-#define MINOR_VERSION "1"
-#define SUB_MAJOR_VERSION "67"
-#define SUB_MINOR_VERSION "0"
+#include <ccan/list.h>
 
-#define	LIBBNXT_RE_VERSION(a, b, c, d)	a"."b"."c"."d
+struct bnxt_re_fque_node {
+	uint8_t valid;
+	struct list_node list;
+};
 
-#define LIBBNXT_RE_REL_VERSION	LIBBNXT_RE_VERSION(MAJOR_VERSION,\
-						   MINOR_VERSION,\
-						   SUB_MAJOR_VERSION,\
-						   SUB_MINOR_VERSION)
-#define LIBBNXT_RE_BUILD_VERSION 238.1.67.0
-#endif	/* __BNXT_RE_VERSION_H__ */
+static inline void fque_init_node(struct bnxt_re_fque_node *node)
+{
+	list_node_init(&node->list);
+	node->valid = false;
+}
+
+static inline void fque_add_node_tail(struct list_head *head,
+				      struct bnxt_re_fque_node *new)
+{
+	list_add_tail(head, &new->list);
+	new->valid = true;
+}
+
+static inline void fque_del_node(struct bnxt_re_fque_node *entry)
+{
+	entry->valid = false;
+	list_del(&entry->list);
+}
+
+static inline uint8_t _fque_node_valid(struct bnxt_re_fque_node *node)
+{
+	return node->valid;
+}
+
+static inline void bnxt_re_fque_add_node(struct list_head *head,
+					 struct bnxt_re_fque_node *node)
+{
+	if (!_fque_node_valid(node))
+		fque_add_node_tail(head, node);
+}
+
+static inline void bnxt_re_fque_del_node(struct bnxt_re_fque_node *node)
+{
+	if (_fque_node_valid(node))
+		fque_del_node(node);
+}
+#endif	/* __FLUSH_H__ */
