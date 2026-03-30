@@ -103,4 +103,18 @@ struct ibv_ah *bnxt_re_create_ah(struct ibv_pd *ibvpd,
 				 struct ibv_ah_attr *attr);
 int bnxt_re_destroy_ah(struct ibv_ah *ibvah);
 
+
+/* Internal functions exposed for DV use */
+void bnxt_re_cleanup_cq(struct bnxt_re_qp *qp, struct bnxt_re_cq *cq);
+int bnxt_re_check_qp_limits(struct bnxt_re_context *cntx,
+			    struct ibv_qp_init_attr *attr);
+void bnxt_re_free_queue_ptr(struct bnxt_re_qp *qp);
+int bnxt_re_alloc_queue_ptr(struct bnxt_re_qp *qp,
+			   struct ibv_qp_init_attr *attr);
+void bnxt_re_free_queues(struct bnxt_re_qp *qp);
+int bnxt_re_alloc_queues(struct bnxt_re_dev *dev,
+			struct bnxt_re_qp *qp,
+			struct ibv_qp_init_attr *attr,
+			uint32_t pg_size);
+
 #endif /* __BNXT_RE_VERBS_H__ */

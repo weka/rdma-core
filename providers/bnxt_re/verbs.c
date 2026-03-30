@@ -930,7 +930,7 @@ int bnxt_re_poll_cq(struct ibv_cq *ibvcq, int nwc, struct ibv_wc *wc)
 	return dqed;
 }
 
-static void bnxt_re_cleanup_cq(struct bnxt_re_qp *qp, struct bnxt_re_cq *cq)
+void bnxt_re_cleanup_cq(struct bnxt_re_qp *qp, struct bnxt_re_cq *cq)
 {
 	struct bnxt_re_context *cntx;
 	struct bnxt_re_queue *que = &cq->cqq;
@@ -984,7 +984,7 @@ int bnxt_re_arm_cq(struct ibv_cq *ibvcq, int flags)
 	return 0;
 }
 
-static int bnxt_re_check_qp_limits(struct bnxt_re_context *cntx,
+int bnxt_re_check_qp_limits(struct bnxt_re_context *cntx,
 				   struct ibv_qp_init_attr *attr)
 {
 	struct ibv_device_attr *devattr;
@@ -1007,7 +1007,7 @@ static int bnxt_re_check_qp_limits(struct bnxt_re_context *cntx,
 	return 0;
 }
 
-static void bnxt_re_free_queue_ptr(struct bnxt_re_qp *qp)
+void bnxt_re_free_queue_ptr(struct bnxt_re_qp *qp)
 {
 	if (qp->jrqq) {
 		free(qp->jrqq->hwque);
@@ -1019,7 +1019,7 @@ static void bnxt_re_free_queue_ptr(struct bnxt_re_qp *qp)
 	}
 }
 
-static int bnxt_re_alloc_queue_ptr(struct bnxt_re_qp *qp,
+int bnxt_re_alloc_queue_ptr(struct bnxt_re_qp *qp,
 				   struct ibv_qp_init_attr *attr)
 {
 	int rc = -ENOMEM;
@@ -1048,7 +1048,7 @@ fail:
 	return rc;
 }
 
-static void bnxt_re_free_queues(struct bnxt_re_qp *qp)
+void bnxt_re_free_queues(struct bnxt_re_qp *qp)
 {
 	if (qp->jrqq) {
 		free(qp->jrqq->swque);
@@ -1150,7 +1150,7 @@ static int bnxt_re_get_sq_slots(struct bnxt_re_dev *rdev,
 	return slots;
 }
 
-static int bnxt_re_alloc_queues(struct bnxt_re_dev *dev,
+int bnxt_re_alloc_queues(struct bnxt_re_dev *dev,
 				struct bnxt_re_qp *qp,
 				struct ibv_qp_init_attr *attr,
 				uint32_t pg_size) {

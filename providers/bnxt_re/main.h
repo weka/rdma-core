@@ -81,6 +81,34 @@ struct bnxt_re_pd {
 	uint32_t pdid;
 };
 
+/* Forward declaration for DV umem type used in CQ/QP */
+struct bnxt_re_dv_umem;
+
+/* DV CQ flags */
+enum bnxt_dv_cq_flags {
+	BNXT_DV_CQ_FLAGS_NONE = 0,
+	BNXT_DV_CQ_FLAGS_VALID = 0x1,
+	BNXT_DV_CQ_FLAGS_UMEM_REG_DEFAULT = 0x2,
+	BNXT_DV_CQ_FLAGS_HELPER = 0x4,
+	BNXT_DV_CQ_FLAGS_L2 = 0x8,
+};
+
+#define BNXT_RE_DB_KEY_INVALID	((uint64_t)-1)
+
+/* Minimal qattr for DV QP functions */
+#define BNXT_RE_QATTR_SQ_INDX	0
+#define BNXT_RE_QATTR_RQ_INDX	1
+struct bnxt_re_qattr {
+	uint32_t esize;
+	uint32_t slots;
+	uint32_t nwr;
+	uint32_t psn_sz;
+	uint32_t npsn;
+	uint32_t sz_ring;
+	uint32_t sz_shad;
+	uint32_t sw_nwr;
+};
+
 struct bnxt_re_cq {
 	struct ibv_cq ibvcq;
 	uint32_t cqid;
@@ -92,6 +120,15 @@ struct bnxt_re_cq {
 	struct list_head prev_cq_head;
 	uint32_t cqe_size;
 	uint8_t  phase;
+	/* DV-only fields */
+	struct bnxt_re_context *cntx;
+	bool first_arm;
+	uint64_t shadow_db_key;
+	struct bnxt_re_dv_umem *cq_umem;
+	int dv_cq_flags;
+	void *toggle_map;
+	uint32_t toggle_size;
+	bool umem_reg;
 };
 
 struct bnxt_re_push_buffer {
@@ -186,6 +223,16 @@ struct bnxt_re_qp {
 	uint16_t max_push_sz;
 	uint8_t qptyp;
 	/* irdord? */
+	/* DV-only fields */
+	struct ibv_qp *ibvqp;
+	struct bnxt_re_qattr qattr[2];
+	struct bnxt_re_pd *re_pd;
+	uint32_t qp_handle;
+	struct bnxt_re_dv_umem *sq_umem;
+	struct bnxt_re_dv_umem *rq_umem;
+	struct bnxt_re_dpi dv_dpi;
+	uint64_t sq_shadow_db_key;
+	uint64_t rq_shadow_db_key;
 };
 
 struct bnxt_re_mr {
