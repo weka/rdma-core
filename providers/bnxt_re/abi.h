@@ -38,7 +38,7 @@
 #define __BNXT_RE_ABI_H__
 
 #if (IBVERBS_PABI_VERSION >= 17)
-#include <kern-abi.h>
+#include <infiniband/kern-abi.h>
 #else
 #include <infiniband/kern-abi.h>
 #endif
