@@ -1,5 +1,3 @@
-# Broadcom bnxt_re provider with direct verbs (DV) support for bifurcated PMD
-
 rdma_shared_provider(bnxt_re libbnxt_re.map
   1 1.0.0
   bnxt_re_dv.c
