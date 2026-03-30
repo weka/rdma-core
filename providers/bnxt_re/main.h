@@ -53,9 +53,9 @@
 #include <stdarg.h>
 
 #ifdef HAVE_RDMA_CORE_PKG
-#include "driver.h"
-#include "util/udma_barrier.h"
-#include "util/mmio.h"
+#include <infiniband/driver.h>
+#include <util/udma_barrier.h>
+#include <util/mmio.h>
 #else
 #include <infiniband/driver.h>
 #include <infiniband/arch.h>

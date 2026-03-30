@@ -55,7 +55,7 @@
 #include <unistd.h>
 
 #ifdef HAVE_RDMA_CORE_PKG
-#include "driver.h"
+#include <infiniband/driver.h>
 #else
 #include <infiniband/driver.h>
 #include <infiniband/arch.h>
