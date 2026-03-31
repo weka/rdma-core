@@ -224,7 +224,6 @@ struct bnxt_re_qp {
 	uint8_t qptyp;
 	/* irdord? */
 	/* DV-only fields */
-	struct ibv_qp *ibvqp;
 	struct bnxt_re_qattr qattr[2];
 	struct bnxt_re_pd *re_pd;
 	uint32_t qp_handle;

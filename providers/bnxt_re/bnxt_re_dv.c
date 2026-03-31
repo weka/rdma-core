@@ -556,7 +556,7 @@ bnxt_re_dv_create_l2_cq(struct ibv_context *ibvctx,
 	 * Note: we skip HDBR for L2 CQs created via ibv_cmd.
 	 * This is acceptable as L2 CQs typically don't use HDBR.
 	 */
-	if (resp.comp_mask & BNXT_RE_CQ_HDBR_KADDR_SUPPORT) {
+	if (0 /* resp.comp_mask & BNXT_RE_CQ_HDBR_KADDR_SUPPORT - not available via ibv_cmd path */) {
 		/* HDBR not supported for L2 CQs via ibv_cmd path */
 		/* cq->dbc would be set here if needed */
 	}
@@ -972,7 +972,7 @@ static void bnxt_re_dv_init_qp(struct ibv_context *ibvctx,
 	qp->rcq = to_bnxt_re_cq(attr->recv_cq);
 	if (attr->srq)
 		qp->srq = to_bnxt_re_srq(attr->srq);
-	qp->rand.seed = qp->qpid;
+	/* qp->rand.seed not in v47 */
 	qp->sq_shadow_db_key = BNXT_RE_DB_KEY_INVALID;
 	qp->rq_shadow_db_key = BNXT_RE_DB_KEY_INVALID;
 	/* qp->sq_msn not in v47 */
@@ -1250,7 +1250,7 @@ static void bnxt_re_dv_qp_update_va(struct bnxt_re_qp *qp,
 		fprintf(stderr, "%s: Updating SQ VA from: 0x%lx to: 0x%lx msnp: 0x%lx\n",
 			      __func__, (uint64_t)que->va, (uint64_t)new_va, pad);
 		que->va = new_va;
-		que->pad = pad;
+		/* que->pad not in v47 */
 	}
 	if (rq_umem) {
 		jqq = qp->jrqq;
