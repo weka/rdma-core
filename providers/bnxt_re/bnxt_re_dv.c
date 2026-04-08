@@ -39,21 +39,10 @@
 #include <sys/mman.h>
 
 #include "main.h"
-#include "bnxt_re-abi.h"
-#include "bnxt_re_dv_abi.h"
+#include "abi.h"
 #include "bnxt_re_dv.h"
 #include "./verbs.h"
 #include "bnxt_re_dv_internal.h"
-#include <ccan/list.h>
-#include "flush.h"
-
-/* Compat defines for v47 stock rdma-core */
-#ifndef BNXT_RE_CQ_TOGGLE_PAGE_SUPPORT
-#define BNXT_RE_CQ_TOGGLE_PAGE_SUPPORT	(1ULL << 0)
-#endif
-#ifndef BNXT_RE_CQ_HDBR_KADDR_SUPPORT
-#define BNXT_RE_CQ_HDBR_KADDR_SUPPORT	(1ULL << 1)
-#endif
 
 static void bnxt_re_dv_get_qp(struct ibv_qp *qp_in, struct bnxt_re_dv_qp *qp_out)
 {
@@ -150,7 +139,7 @@ int bnxt_re_dv_free_db_region(struct ibv_context *ctx,
 	if (attr->dbr != MAP_FAILED)
 		munmap(attr->dbr, dev->pg_size);
 
-	fprintf(stderr, DEV "%s: DV DBR: handle: 0x%x\n", __func__, attr->handle);
+	bnxt_trace_dv(NULL, DEV "%s: DV DBR: handle: 0x%x\n", __func__, attr->handle);
 	fill_attr_in_obj(cmd, BNXT_RE_DV_FREE_DBR_HANDLE, attr->handle);
 
 	ret = execute_ioctl(ctx, cmd);
@@ -209,7 +198,7 @@ bnxt_re_dv_alloc_db_region(struct ibv_context *ctx)
 		errno = ENOMEM;
 		return NULL;
 	}
-	fprintf(stderr, "%s: DV DBR: handle: 0x%x\n", __func__, out->handle);
+	bnxt_trace_dv(NULL, "%s: DV DBR: handle: 0x%x\n", __func__, out->handle);
 
 	return out;
 }
@@ -291,7 +280,7 @@ void *bnxt_re_dv_umem_reg(struct ibv_context *ibvctx, struct bnxt_re_dv_umem_reg
 	umem->addr = in->addr;
 	umem->size = in->size;
 
-	fprintf(stderr, "%s: DV Umem Reg: handle: 0x%x addr: 0x%lx size: 0x%lx\n",
+	bnxt_trace_dv(NULL, "%s: DV Umem Reg: handle: 0x%x addr: 0x%lx size: 0x%lx\n",
 		      __func__, umem->handle, (uint64_t)umem->addr, umem->size);
 	return (void *)umem;
 err_umem_reg_cmd:
@@ -311,7 +300,7 @@ int bnxt_re_dv_umem_dereg(void *umem_handle)
 			       1);
 	int ret;
 
-	fprintf(stderr, "%s: DV Umem Dereg: handle: 0x%x\n",
+	bnxt_trace_dv(NULL, "%s: DV Umem Dereg: handle: 0x%x\n",
 		      __func__, umem->handle);
 	fill_attr_in_obj(cmd, BNXT_RE_UMEM_OBJ_DEREG_HANDLE, umem->handle);
 	ret = execute_ioctl(umem->context, cmd);
@@ -328,8 +317,11 @@ int bnxt_re_dv_umem_dereg(void *umem_handle)
 
 static struct ibv_context *bnxt_re_to_ibvctx(struct bnxt_re_context *cntx)
 {
-	/* v47 stock rdma-core: ibvctx is struct verbs_context */
+#ifdef RCP_USE_IB_UVERBS
 	return &cntx->ibvctx.context;
+#else
+	return &cntx->ibvctx;
+#endif
 }
 
 static bool bnxt_re_dv_is_valid_umem(struct bnxt_re_dev *dev, struct bnxt_re_dv_umem *umem,
@@ -357,33 +349,36 @@ void *bnxt_re_dv_cq_mem_alloc(struct ibv_context *ibvctx, int num_cqe,
 	struct bnxt_re_dev *dev = to_bnxt_re_dev(ibvctx->device);
 	struct bnxt_re_cq *cq;
 
-	uint32_t depth;
-
 	if (num_cqe > dev->max_cq_depth)
 		return NULL;
 
-	cq = calloc(1, sizeof(*cq));
+	cq = calloc(1, (sizeof(*cq) + sizeof(struct bnxt_re_queue)));
 	if (!cq)
 		return NULL;
 
-	depth = roundup_pow_of_two(num_cqe + 1);
-	if (depth > (uint32_t)(dev->max_cq_depth + 1))
-		depth = dev->max_cq_depth + 1;
-	cq->cqq.depth = depth;
-	cq->cqq.stride = bnxt_re_get_cqe_sz();
-	if (bnxt_re_alloc_aligned(&cq->cqq, dev->pg_size))
+	cq->cqq = (void *)((char *)cq + sizeof(*cq));
+	cq->mem = bnxt_re_alloc_cqslab(cntx, num_cqe, 0);
+	if (!cq->mem)
+		goto mem;
+
+	cq->cqq->depth = cq->mem->pad;
+	cq->cqq->stride = bnxt_re_get_cqe_sz();
+	cq->cqq->va = cq->mem->va_head;
+	if (!cq->cqq->va)
 		goto fail;
 
-	cq_attr->cqe_size = cq->cqq.stride;
-	cq_attr->ncqe = cq->cqq.depth;
-	fprintf(stderr, "%s: Updating ncqe from:%d to:%d\n",
+	cq_attr->cqe_size = cq->cqq->stride;
+	cq_attr->ncqe = cq->cqq->depth;
+	bnxt_trace_dv(NULL, "%s: Updating ncqe from:%d to:%d\n",
 		      __func__, num_cqe, cq_attr->ncqe);
 
-	cq->ibvcq.context = bnxt_re_to_ibvctx(cntx);
+	cq->verbs_cq.cq.context = bnxt_re_to_ibvctx(cntx);
 	bnxt_re_dv_cq_alloc_helper = true;
 	return cq;
 
 fail:
+	bnxt_re_free_mem(cq->mem, NULL);
+mem:
 	free(cq);
 	return NULL;
 }
@@ -408,7 +403,7 @@ static int bnxt_re_dv_create_cq_cmd(struct bnxt_re_dev *dev,
 
 	/* Input args */
 	req.ncqe = cq_attr->ncqe;
-	req.va = (uint64_t)cq->cqq.va;
+	req.va = (uint64_t)cq->cqq->va;
 	req.comp_mask = comp_mask;
 	fill_attr_in_ptr(cmd, BNXT_RE_DV_CREATE_CQ_REQ, &req);
 
@@ -424,7 +419,8 @@ static int bnxt_re_dv_create_cq_cmd(struct bnxt_re_dev *dev,
 	if (cq_umem) {
 		fill_attr_in_obj(cmd, BNXT_RE_DV_CREATE_CQ_UMEM_HANDLE,
 				 cq_umem->handle);
-		fprintf(stderr, "%s: cq_umem: handle: 0x%x offset: 0x%lx size: 0x%x\n",
+		bnxt_trace_dv(NULL,
+			      "%s: cq_umem: handle: 0x%x offset: 0x%lx size: 0x%x\n",
 			      __func__, cq_umem->handle, offset, size);
 	}
 
@@ -432,7 +428,7 @@ static int bnxt_re_dv_create_cq_cmd(struct bnxt_re_dev *dev,
 	handle = fill_attr_out_obj(cmd, BNXT_RE_DV_CREATE_CQ_HANDLE);
 	fill_attr_out_ptr(cmd, BNXT_RE_DV_CREATE_CQ_RESP, resp);
 
-	fprintf(stderr, "%s: ncqe: %d va: 0x%" PRIx64 " comp_mask: 0x%" PRIx64 "\n",
+	bnxt_trace_dv(NULL, "%s: ncqe: %d va: 0x%" PRIx64 " comp_mask: 0x%" PRIx64 "\n",
 		      __func__, req.ncqe, (uint64_t)req.va, (uint64_t)req.comp_mask);
 
 	ret = execute_ioctl(ibvctx, cmd);
@@ -440,10 +436,11 @@ static int bnxt_re_dv_create_cq_cmd(struct bnxt_re_dev *dev,
 		fprintf(stderr, "%s: execute_ioctl() failed: %d\n", __func__, ret);
 		return ret;
 	}
-	cq->ibvcq.handle = read_attr_obj(BNXT_RE_DV_CREATE_CQ_HANDLE, handle);
+	cq->verbs_cq.cq.handle = read_attr_obj(BNXT_RE_DV_CREATE_CQ_HANDLE, handle);
 
-	fprintf(stderr, "%s: CQ handle: 0x%x\n", __func__, cq->ibvcq.handle);
-	fprintf(stderr, "%s: CQ cqid: 0x%x tail: 0x%x phase: 0x%x comp_mask: 0x%llx\n",
+	bnxt_trace_dv(NULL, "%s: CQ handle: 0x%x\n", __func__, cq->verbs_cq.cq.handle);
+	bnxt_trace_dv(NULL,
+		      "%s: CQ cqid: 0x%x tail: 0x%x phase: 0x%x comp_mask: 0x%llx\n",
 		      __func__, resp->cqid, resp->tail, resp->phase, resp->comp_mask);
 
 	return 0;
@@ -453,24 +450,47 @@ static int bnxt_re_dv_init_cq(struct ibv_context *ibvctx, struct bnxt_re_cq *cq,
 			      struct bnxt_re_dv_cq_resp *resp)
 {
 	struct bnxt_re_context *cntx = to_bnxt_re_context(ibvctx);
+	struct bnxt_re_mmap_info minfo = {};
 	int ret = 0;
 
 	cq->cqid = resp->cqid;
 	cq->phase = resp->phase;
-	cq->cqq.tail = resp->tail;
+	cq->cqq->tail = resp->tail;
 	cq->udpi = &cntx->udpi;
 	cq->first_arm = true;
 	cq->cntx = cntx;
-	/* cq->rand not in v47 */
+	cq->rand.seed = cq->cqid;
 	cq->shadow_db_key = BNXT_RE_DB_KEY_INVALID;
-	/* Toggle page support not available in v47 stock rdma-core */
-	if (resp->comp_mask & BNXT_RE_CQ_TOGGLE_PAGE_SUPPORT)
-		fprintf(stderr, "%s: toggle page not supported in v47 stock\n", __func__);
+	if (!(resp->comp_mask & BNXT_RE_CQ_TOGGLE_PAGE_SUPPORT))
+		goto done;
 
-	pthread_spin_init(&cq->cqq.qlock, PTHREAD_PROCESS_PRIVATE);
-	list_head_init(&cq->sfhead);
-	list_head_init(&cq->rfhead);
-	list_head_init(&cq->prev_cq_head);
+	minfo.type = BNXT_RE_CQ_TOGGLE_MEM;
+	minfo.res_id = resp->cqid;
+	ret = bnxt_re_get_toggle_mem(ibvctx, &minfo, NULL);
+	if (ret) {
+		fprintf(stderr, "%s: bnxt_re_get_toggle_mem() failed: %d\n",
+			__func__, ret);
+		return ret;
+	}
+	cq->toggle_map = mmap(NULL, minfo.alloc_size, PROT_READ,
+			      MAP_SHARED, ibvctx->cmd_fd,
+			      minfo.alloc_offset);
+	if (cq->toggle_map == MAP_FAILED) {
+		fprintf(stderr, "%s: mmap() failed\n", __func__);
+		cq->toggle_map = NULL;
+		ret = -EIO;
+		return ret;
+	}
+	cq->toggle_size = minfo.alloc_size;
+
+	bnxt_trace_dv(NULL, "%s: toggle_map: 0x%lx toggle_size: %d\n",
+		      __func__, (uintptr_t)cq->toggle_map, cq->toggle_size);
+
+done:
+	bnxt_re_dp_spin_init(&cq->cqq->qlock, PTHREAD_PROCESS_PRIVATE, !bnxt_single_threaded);
+	INIT_DBLY_LIST_HEAD(&cq->sfhead);
+	INIT_DBLY_LIST_HEAD(&cq->rfhead);
+	INIT_DBLY_LIST_HEAD(&cq->prev_cq_head);
 	return ret;
 }
 
@@ -478,8 +498,8 @@ void *bnxt_re_dv_cq_umem_reg(struct ibv_context *ibvctx, struct bnxt_re_cq *cq)
 {
 	struct bnxt_re_dv_umem_reg_attr in = {};
 
-	in.addr = cq->cqq.va;
-	in.size = cq->cqq.depth * 32;
+	in.addr = cq->cqq->va;
+	in.size = cq->cqq->depth * 32;
 	in.access_flags = IBV_ACCESS_LOCAL_WRITE;
 
 	return bnxt_re_dv_umem_reg(ibvctx, &in);
@@ -496,6 +516,11 @@ bnxt_re_dv_create_l2_cq(struct ibv_context *ibvctx,
 {
 	struct bnxt_re_context *cntx = to_bnxt_re_context(ibvctx);
 	struct bnxt_re_dev *dev = to_bnxt_re_dev(ibvctx->device);
+	struct ibv_cq_init_attr_ex attr_ex = {};
+	/* coverity[UNUSED_VALUE:SUPPRESS] */
+	struct bnxt_re_cq_resp_ex resp = {};
+	/* coverity[UNUSED_VALUE:SUPPRESS] */
+	struct bnxt_re_cq_req_ex cmd = {};
 	struct bnxt_re_dv_umem *umem;
 	struct bnxt_re_cq *cq;
 	void *cq_va;
@@ -508,9 +533,9 @@ bnxt_re_dv_create_l2_cq(struct ibv_context *ibvctx,
 	if (!cq)
 		return NULL;
 
-	/* cqq is embedded by value in v47 */
-	cq->cqq.depth = cq_attr->ncqe;
-	cq->cqq.stride = bnxt_re_get_cqe_sz();
+	cq->cqq = (void *)((char *)cq + sizeof(*cq));
+	cq->cqq->depth = cq_attr->ncqe;
+	cq->cqq->stride = bnxt_re_get_cqe_sz();
 
 	/* Get CQ VA from UMEM */
 	if (!cq_attr->umem_handle) {
@@ -521,58 +546,76 @@ bnxt_re_dv_create_l2_cq(struct ibv_context *ibvctx,
 	umem = (struct bnxt_re_dv_umem *)cq_attr->umem_handle;
 	cq_va = (void *)(umem->addr + cq_attr->cq_umem_offset);
 	/* coverity[UNUSED_VALUE:SUPPRESS] */
-	cq->cqq.va = cq_va;
+	cq->cqq->va = cq_va;
 
-	/* Prepare and send ibv_cmd_create_cq for L2 CQ */
-	{
-		struct ubnxt_re_cq ibv_cmd;
-		struct ubnxt_re_cq_resp ibv_resp;
-
-		memset(&ibv_cmd, 0, sizeof(ibv_cmd));
-		memset(&ibv_resp, 0, sizeof(ibv_resp));
-		ibv_cmd.cq_va = (uintptr_t)cq_va;
-		ibv_cmd.cq_handle = (uintptr_t)cq;
-		ret = ibv_cmd_create_cq(ibvctx, cq_attr->ncqe, NULL, 0,
-					&cq->ibvcq, &ibv_cmd.ibv_cmd,
-					sizeof(ibv_cmd), &ibv_resp.ibv_resp,
-					sizeof(ibv_resp));
-		if (ret) {
-			fprintf(stderr, "%s: ibv_cmd_create_cq() failed: %d\n", __func__, ret);
-			goto fail;
-		}
-		cq->cqid = ibv_resp.cqid;
-		cq->phase = ibv_resp.phase;
-		cq->cqq.tail = ibv_resp.tail;
-		fprintf(stderr, "%s: Created CQ: cqid: %d\n", __func__, cq->cqid);
+	/* Prepare command structure */
+	memset(&cmd, 0, sizeof(cmd));
+	/* coverity[UNUSED_VALUE:SUPPRESS] */
+	cmd.cq_va = (uint64_t)cq_va;
+	/* coverity[UNUSED_VALUE:SUPPRESS] */
+	cmd.cq_handle = (uint64_t)cq;
+	cmd.comp_mask = BNXT_RE_COMP_MASK_CQ_REQ_L2;  /* L2-specific flag */
+	cmd.comp_mask |= BNXT_RE_COMP_MASK_CQ_REQ_HAS_HDBR_KADDR;
+	/* coverity[UNUSED_VALUE:SUPPRESS] */
+	cmd.comp_mask |= BNXT_RE_COMP_MASK_CQ_REQ_IGNORE_OVERRUN;
+	attr_ex.cqe = cq_attr->ncqe;
+	ret = ibv_cmd_create_cq_ex_compat(ibvctx, &attr_ex,
+					  &cq->verbs_cq, &cmd.cmd,
+					  sizeof(cmd), &resp.resp,
+					  sizeof(resp), 0);
+	if (ret) {
+		fprintf(stderr, "%s: ibv_cmd_create_cq() failed: %d\n", __func__, ret);
+		goto fail;
+	} else {
+		bnxt_trace_dv(NULL, "%s: Created CQ: cqid: %d\n", __func__, resp.cqid);
 	}
+
+	/* Initialize CQ from response */
+	cq->cqid = resp.cqid;
+	cq->phase = resp.phase;
+	cq->cqq->tail = resp.tail;
 	cq->udpi = &cntx->udpi;
 	cq->first_arm = true;
 	cq->cntx = cntx;
-	/* cq->rand not in v47 */
+	cq->rand.seed = cq->cqid;
 	cq->shadow_db_key = BNXT_RE_DB_KEY_INVALID;
 
-	/* Toggle page support not available in v47 stock rdma-core */
+	if (resp.comp_mask & BNXT_RE_CQ_TOGGLE_PAGE_SUPPORT) {
+		struct bnxt_re_mmap_info minfo = {};
+
+		minfo.type = BNXT_RE_CQ_TOGGLE_MEM;
+		minfo.res_id = resp.cqid;
+		ret = bnxt_re_get_toggle_mem(ibvctx, &minfo, NULL);
+		if (!ret) {
+			cq->toggle_map = mmap(NULL, minfo.alloc_size, PROT_READ,
+					      MAP_SHARED, ibvctx->cmd_fd,
+					      minfo.alloc_offset);
+			if (cq->toggle_map != MAP_FAILED)
+				cq->toggle_size = minfo.alloc_size;
+		}
+	}
 	/* Handle HDBR
 	 * Note: we skip HDBR for L2 CQs created via ibv_cmd.
 	 * This is acceptable as L2 CQs typically don't use HDBR.
 	 */
-	if (0 /* resp.comp_mask & BNXT_RE_CQ_HDBR_KADDR_SUPPORT - not available via ibv_cmd path */) {
+	if (resp.comp_mask & BNXT_RE_CQ_HDBR_KADDR_SUPPORT) {
 		/* HDBR not supported for L2 CQs via ibv_cmd path */
 		/* cq->dbc would be set here if needed */
 	}
 
 	/* Initialize spinlock and lists */
-	pthread_spin_init(&cq->cqq.qlock, PTHREAD_PROCESS_PRIVATE);
-	list_head_init(&cq->sfhead);
-	list_head_init(&cq->rfhead);
-	list_head_init(&cq->prev_cq_head);
+	bnxt_re_dp_spin_init(&cq->cqq->qlock, PTHREAD_PROCESS_PRIVATE,
+			     !bnxt_single_threaded);
+	INIT_DBLY_LIST_HEAD(&cq->sfhead);
+	INIT_DBLY_LIST_HEAD(&cq->rfhead);
+	INIT_DBLY_LIST_HEAD(&cq->prev_cq_head);
 
 	/* Store UMEM handle for cleanup */
 	cq->cq_umem = (struct bnxt_re_dv_umem *)cq_attr->umem_handle;
 	cq->dv_cq_flags = BNXT_DV_CQ_FLAGS_VALID | BNXT_DV_CQ_FLAGS_L2;
 
 	cq_attr->cqid = cq->cqid;
-	return &cq->ibvcq;
+	return &cq->verbs_cq.cq;
 
 fail:
 	free(cq);
@@ -608,18 +651,18 @@ struct ibv_cq *bnxt_re_dv_create_cq(struct ibv_context *ibvctx,
 		if (!cq)
 			return NULL;
 
-		/* cqq is embedded by value in v47 */
-		cq->cqq.depth = cq_attr->ncqe;
-		cq->cqq.stride = bnxt_re_get_cqe_sz();
+		cq->cqq = (void *)((char *)cq + sizeof(*cq));
+		cq->cqq->depth = cq_attr->ncqe;
+		cq->cqq->stride = bnxt_re_get_cqe_sz();
 	} else {
 		cq = (struct bnxt_re_cq *)cq_attr->cq_handle;
 		cq->dv_cq_flags = BNXT_DV_CQ_FLAGS_HELPER;
 	}
 
 	new_va = cq_umem->addr + cq_attr->cq_umem_offset;
-	fprintf(stderr, "%s: Updating CQ VA from: 0x%lx to: 0x%lx\n",
-		      __func__, (uint64_t)cq->cqq.va, (uint64_t)new_va);
-	cq->cqq.va = new_va;
+	bnxt_trace_dv(NULL, "%s: Updating CQ VA from: 0x%lx to: 0x%lx\n",
+		      __func__, (uint64_t)cq->cqq->va, (uint64_t)new_va);
+	cq->cqq->va = new_va;
 
 	if (!cq_attr->umem_handle) {
 		cq_umem = bnxt_re_dv_cq_umem_reg(ibvctx, cq);
@@ -644,14 +687,14 @@ struct ibv_cq *bnxt_re_dv_create_cq(struct ibv_context *ibvctx,
 	}
 
 	cq->dv_cq_flags |= BNXT_DV_CQ_FLAGS_VALID;
-	return &cq->ibvcq;
+	return &cq->verbs_cq.cq;
 
 umem_dereg:
 	if (cq->dv_cq_flags & BNXT_DV_CQ_FLAGS_UMEM_REG_DEFAULT)
 		bnxt_re_dv_umem_dereg(cq->cq_umem);
 fail:
-	if (cq->cqq.va)
-		bnxt_re_free_aligned(&cq->cqq);
+	if (cq->dv_cq_flags & BNXT_DV_CQ_FLAGS_HELPER)
+		bnxt_re_free_mem(cq->mem, NULL);
 	free(cq);
 	return NULL;
 }
@@ -683,7 +726,7 @@ int bnxt_re_dv_destroy_cq(struct ibv_cq *ibvcq)
 	struct ibv_context *ibvctx = bnxt_re_to_ibvctx(cq->cntx);
 
 	fill_attr_in_obj(cmd, BNXT_RE_DV_DESTROY_CQ_HANDLE, ibvcq->handle);
-	fprintf(stderr, "%s: CQ handle: 0x%x\n", __func__, ibvcq->handle);
+	bnxt_trace_dv(NULL, "%s: CQ handle: 0x%x\n", __func__, ibvcq->handle);
 
 	ret = execute_ioctl(ibvctx, cmd);
 	if (ret) {
@@ -693,12 +736,11 @@ int bnxt_re_dv_destroy_cq(struct ibv_cq *ibvcq)
 
 	if (cq->umem_reg) {
 		bnxt_re_dv_umem_dereg(cq->cq_umem);
+		bnxt_re_free_mem(cq->mem, NULL);
 	}
 
 	if (cq->toggle_map)
 		munmap(cq->toggle_map, cq->toggle_size);
-	if (cq->cqq.va)
-		bnxt_re_free_aligned(&cq->cqq);
 	free(cq);
 	return ret;
 }
@@ -708,58 +750,45 @@ bnxt_re_dv_alloc_qp(struct ibv_context *ibvctx,
 		    struct ibv_qp_init_attr_ex *attr)
 {
 	struct bnxt_re_context *cntx = to_bnxt_re_context(ibvctx);
-	struct bnxt_re_dev *dev = to_bnxt_re_dev(ibvctx->device);
-	struct ibv_qp_init_attr attr_compat;
+	struct bnxt_re_qattr qattr[2];
 	struct bnxt_re_qp *qp;
+	void *mem;
 
-	/* Convert attr_ex to plain attr for v47's bnxt_re_check_qp_limits */
-	memset(&attr_compat, 0, sizeof(attr_compat));
-	attr_compat.cap = attr->cap;
-	attr_compat.qp_type = attr->qp_type;
-	attr_compat.srq = attr->srq;
-	if (bnxt_re_check_qp_limits(cntx, &attr_compat))
+	if (bnxt_re_check_qp_limits(cntx, attr))
 		return NULL;
 
-	qp = calloc(1, sizeof(*qp));
+	memset(qattr, 0, (2 * sizeof(*qattr)));
+	mem = bnxt_re_alloc_qpslab(cntx, attr, qattr);
+	if (!mem)
+		return NULL;
+
+	qp = bnxt_re_get_obj(mem, sizeof(*qp));
 	if (!qp)
-		return NULL;
+		goto fail;
 
+	qp->ibvqp = &qp->vqp.qp;
+	qp->mem = mem;
 	qp->cctx = &cntx->cctx;
 	qp->cntx = cntx;
-	qp->qpmode = cntx->wqe_mode & BNXT_RE_WQE_MODE_VARIABLE;
+	qp->qpmode = cntx->modes & BNXT_RE_WQE_MODE_VARIABLE;
 	qp->re_pd = to_bnxt_re_pd(attr->pd);
 
 	/* alloc queue pointers */
-	if (bnxt_re_alloc_queue_ptr(qp, &attr_compat))
+	if (bnxt_re_alloc_queue_ptr(qp, attr))
 		goto fail;
 
-	/* alloc queues - v47 signature: (dev, qp, attr, pg_size) */
-	if (bnxt_re_alloc_queues(dev, qp, &attr_compat, dev->pg_size))
-		goto failq;
+	/* alloc queues */
+	if (bnxt_re_alloc_queues(qp, attr, qattr))
+		goto fail;
 
-	/* Save queue attributes for DV use */
-	if (qp->jsqq && qp->jsqq->hwque) {
-		qp->qattr[BNXT_RE_QATTR_SQ_INDX].slots = qp->jsqq->hwque->depth;
-		qp->qattr[BNXT_RE_QATTR_SQ_INDX].esize = qp->jsqq->hwque->esize;
-		qp->qattr[BNXT_RE_QATTR_SQ_INDX].sz_ring = qp->jsqq->hwque->depth * qp->jsqq->hwque->stride;
-	}
-	if (qp->jrqq && qp->jrqq->hwque) {
-		qp->qattr[BNXT_RE_QATTR_RQ_INDX].slots = qp->jrqq->hwque->depth;
-		qp->qattr[BNXT_RE_QATTR_RQ_INDX].esize = qp->jrqq->hwque->esize;
-		qp->qattr[BNXT_RE_QATTR_RQ_INDX].sz_ring = qp->jrqq->hwque->depth * qp->jrqq->hwque->stride;
-	}
-
-	fprintf(stderr, "%s: sq_va: 0x%" PRIx64 " sq_len: 0x%x rq_va: 0x%" PRIx64 " rq_len: 0x%x\n",
-		      __func__,
-		      (uint64_t)(qp->jsqq ? qp->jsqq->hwque->va : 0),
-		      qp->qattr[BNXT_RE_QATTR_SQ_INDX].sz_ring,
-		      (uint64_t)(qp->jrqq ? qp->jrqq->hwque->va : 0),
-		      qp->qattr[BNXT_RE_QATTR_RQ_INDX].sz_ring);
+	bnxt_trace_dv(NULL,
+		      "%s: sq_va: 0x%" PRIx64 " sq_len: 0x%x rq_va: 0x%" PRIx64 " rq_len: 0x%x\n",
+		      __func__, (uint64_t)qp->jsqq->hwque->va, qattr[0].sz_ring,
+		      (qp->jrqq ? (uint64_t)qp->jrqq->hwque->va : 0), qattr[1].sz_ring);
+	memcpy(qp->qattr, qattr, sizeof(qattr));
 	return qp;
-failq:
-	bnxt_re_free_queue_ptr(qp);
 fail:
-	free(qp);
+	bnxt_re_free_mem(mem, NULL);
 	return NULL;
 }
 
@@ -828,11 +857,11 @@ bnxt_re_dv_create_qp_cmd_int(struct ibv_context *ibvctx,
 
 	re_cq = to_bnxt_re_cq(dv_qp_attr->send_cq);
 	fill_attr_in_obj(cmd, BNXT_RE_DV_CREATE_QP_SEND_CQ_HANDLE,
-			 re_cq->ibvcq.handle);
+			 re_cq->verbs_cq.cq.handle);
 
 	re_cq = to_bnxt_re_cq(dv_qp_attr->recv_cq);
 	fill_attr_in_obj(cmd, BNXT_RE_DV_CREATE_QP_RECV_CQ_HANDLE,
-			 re_cq->ibvcq.handle);
+			 re_cq->verbs_cq.cq.handle);
 
 	if (dv_qp_attr->dbr_handle) {
 		db_attr = dv_qp_attr->dbr_handle;
@@ -856,7 +885,7 @@ bnxt_re_dv_create_qp_cmd_int(struct ibv_context *ibvctx,
 	}
 
 	qp->qp_handle = read_attr_obj(BNXT_RE_DV_CREATE_QP_HANDLE, handle);
-	fprintf(stderr, "%s: QP handle: 0x%x qpid: 0x%x\n",
+	bnxt_trace_dv(NULL, "%s: QP handle: 0x%x qpid: 0x%x\n",
 		      __func__, qp->qp_handle, resp->qpid);
 
 	return 0;
@@ -896,7 +925,7 @@ static void bnxt_re_print_dv_qp_attr(struct ibv_qp_init_attr_ex *attr,
 {
 	struct bnxt_re_cq *cq;
 
-	if (1) /* bnxt_trace: disabled */
+	if (!(bnxt_debug_mask & BNXT_DUMP_DV))
 		return;
 
 	fprintf(stderr, "DV_QP_ATTR:\n");
@@ -938,7 +967,7 @@ static void bnxt_re_dv_init_ib_qp(struct ibv_context *ibvctx,
 				  struct ibv_qp_init_attr_ex *attr,
 				  struct bnxt_re_qp *qp)
 {
-	struct ibv_qp *ibvqp = &qp->ibvqp;
+	struct ibv_qp *ibvqp = qp->ibvqp;
 
 	ibvqp->handle =	qp->qp_handle;
 	ibvqp->qp_num =	qp->qpid;
@@ -972,10 +1001,10 @@ static void bnxt_re_dv_init_qp(struct ibv_context *ibvctx,
 	qp->rcq = to_bnxt_re_cq(attr->recv_cq);
 	if (attr->srq)
 		qp->srq = to_bnxt_re_srq(attr->srq);
-	/* qp->rand.seed not in v47 */
+	qp->rand.seed = qp->qpid;
 	qp->sq_shadow_db_key = BNXT_RE_DB_KEY_INVALID;
 	qp->rq_shadow_db_key = BNXT_RE_DB_KEY_INVALID;
-	/* qp->sq_msn not in v47 */
+	qp->sq_msn = 0;
 
 	rdev = cntx->rdev;
 	devattr = &rdev->devattr;
@@ -984,10 +1013,10 @@ static void bnxt_re_dv_init_qp(struct ibv_context *ibvctx,
 	cap->max_rsge = attr->cap.max_recv_sge;
 	cap->max_inline = attr->cap.max_inline_data;
 	cap->sqsig = attr->sq_sig_all;
-	/* cap->is_atomic_cap not in v47 */
-	fque_init_node(&qp->snode);
-	fque_init_node(&qp->rnode);
-	/* qp->dbnode not in v47 */
+	cap->is_atomic_cap = devattr->atomic_cap;
+	INIT_DBLY_LIST_NODE(&qp->snode);
+	INIT_DBLY_LIST_NODE(&qp->rnode);
+	INIT_DBLY_LIST_NODE(&qp->dbnode);
 
 	bnxt_re_dv_init_ib_qp(ibvctx, attr, qp);
 }
@@ -1085,28 +1114,24 @@ bnxt_re_dv_create_qp_int(struct ibv_pd *ibvpd,
 		fprintf(stderr,
 			"%s: bnxt_re_dv_qp_umem_reg() failed: %d\n",
 			__func__, ret);
-		if (qp->jsqq) bnxt_re_free_queues(qp);
-		if (qp->jsqq) bnxt_re_free_queue_ptr(qp);
-		free(qp);
+		bnxt_re_free_mem(qp->mem, NULL);
 		return NULL;
 	}
 
 	ret = bnxt_re_dv_create_qp_cmd_int(ibvpd->context, &dv_qp_attr_int,
 					   dv_qp_attr, &resp, qp);
 	if (ret) {
-		if (qp->jsqq) bnxt_re_free_queues(qp);
-		if (qp->jsqq) bnxt_re_free_queue_ptr(qp);
-		free(qp);
+		bnxt_re_free_mem(qp->mem, NULL);
 		return NULL;
 	}
 
 	bnxt_re_dv_init_qp(ibvpd->context, &attr_ex, qp, &resp);
-	return &qp->ibvqp;
+	return qp->ibvqp;
 }
 
 static void bnxt_re_dv_print_qp_mem_info(struct bnxt_re_dv_qp_mem_info *info)
 {
-	if (1) /* bnxt_trace: disabled */
+	if (!(bnxt_debug_mask & BNXT_DUMP_DV))
 		return;
 
 	fprintf(stderr, "\t SQ Info:\n");
@@ -1151,51 +1176,25 @@ int bnxt_re_dv_qp_get_mem_info(struct ibv_pd *ibvpd,
 			       struct bnxt_re_dv_qp_mem_info *qp_mem)
 {
 	struct bnxt_re_context *cntx = to_bnxt_re_context(ibvpd->context);
-	struct ibv_qp_init_attr attr_compat;
-	struct bnxt_re_qp *tmp_qp;
+	struct ibv_qp_init_attr_ex attr_ex;
 	struct bnxt_re_qattr qattr[2];
 	int rc;
 
-	memset(&attr_compat, 0, sizeof(attr_compat));
-	attr_compat.cap = attr->cap;
-	attr_compat.qp_type = attr->qp_type;
-	attr_compat.srq = attr->srq;
+	memset(&attr_ex, 0, sizeof(attr_ex));
+	memcpy(&attr_ex, attr, sizeof(*attr));
+	attr_ex.comp_mask = IBV_QP_INIT_ATTR_PD;
+	attr_ex.pd = ibvpd;
 
-	rc = bnxt_re_check_qp_limits(cntx, &attr_compat);
+	rc = bnxt_re_check_qp_limits(cntx, &attr_ex);
 	if (rc < 0)
 		return rc;
 
-	tmp_qp = calloc(1, sizeof(*tmp_qp));
-	if (!tmp_qp)
-		return -ENOMEM;
-	tmp_qp->cctx = &cntx->cctx;
-	tmp_qp->qpmode = cntx->wqe_mode & BNXT_RE_WQE_MODE_VARIABLE;
-	tmp_qp->cntx = cntx;
-	rc = bnxt_re_alloc_queue_ptr(tmp_qp, &attr_compat);
-	if (rc < 0) {
-		free(tmp_qp);
+	memset(qattr, 0, (2 * sizeof(*qattr)));
+	rc = bnxt_re_get_sqmem_size(cntx, &attr_ex, &qattr[BNXT_RE_QATTR_SQ_INDX]);
+	if (rc < 0)
 		return rc;
-	}
-	rc = bnxt_re_alloc_queues(cntx->rdev, tmp_qp, &attr_compat, cntx->rdev->pg_size);
-	if (rc < 0) {
-		bnxt_re_free_queue_ptr(tmp_qp);
-		free(tmp_qp);
-		return rc;
-	}
-	if (tmp_qp->jsqq && tmp_qp->jsqq->hwque) {
-		qattr[BNXT_RE_QATTR_SQ_INDX].slots = tmp_qp->jsqq->hwque->depth;
-		qattr[BNXT_RE_QATTR_SQ_INDX].esize = tmp_qp->jsqq->hwque->esize;
-		qattr[BNXT_RE_QATTR_SQ_INDX].sz_ring = tmp_qp->jsqq->hwque->depth * tmp_qp->jsqq->hwque->stride;
-	}
-	if (tmp_qp->jrqq && tmp_qp->jrqq->hwque) {
-		qattr[BNXT_RE_QATTR_RQ_INDX].slots = tmp_qp->jrqq->hwque->depth;
-		qattr[BNXT_RE_QATTR_RQ_INDX].esize = tmp_qp->jrqq->hwque->esize;
-		qattr[BNXT_RE_QATTR_RQ_INDX].sz_ring = tmp_qp->jrqq->hwque->depth * tmp_qp->jrqq->hwque->stride;
-	}
-	bnxt_re_free_queues(tmp_qp);
-	bnxt_re_free_queue_ptr(tmp_qp);
-	free(tmp_qp);
 
+	rc = bnxt_re_get_rqmem_size(cntx, &attr_ex, &qattr[BNXT_RE_QATTR_RQ_INDX]);
 	if (rc < 0)
 		return rc;
 
@@ -1247,17 +1246,17 @@ static void bnxt_re_dv_qp_update_va(struct bnxt_re_qp *qp,
 
 		new_va = (sq_umem->addr + (qp->qattr[0].sz_ring * sq_umem->umem_qp_count));
 		pad = (new_va + que->depth * que->stride);
-		fprintf(stderr, "%s: Updating SQ VA from: 0x%lx to: 0x%lx msnp: 0x%lx\n",
+		bnxt_trace_dv(NULL, "%s: Updating SQ VA from: 0x%lx to: 0x%lx msnp: 0x%lx\n",
 			      __func__, (uint64_t)que->va, (uint64_t)new_va, pad);
 		que->va = new_va;
-		/* que->pad not in v47 */
+		que->pad = pad;
 	}
 	if (rq_umem) {
 		jqq = qp->jrqq;
 		que = jqq->hwque;
 
 		new_va = (rq_umem->addr + (qp->qattr[1].sz_ring * rq_umem->umem_qp_count));
-		fprintf(stderr, "%s: Updating RQ VA from: 0x%lx to: 0x%lx\n",
+		bnxt_trace_dv(NULL, "%s: Updating RQ VA from: 0x%lx to: 0x%lx\n",
 			      __func__, (uint64_t)que->va, (uint64_t)new_va);
 		que->va = new_va;
 	}
@@ -1348,7 +1347,7 @@ bnxt_re_dv_create_qp_cmd_ext(struct ibv_context *ibvctx,
 			__func__, sq_umem->handle, offset, size);
 		return -EINVAL;
 	}
-	fprintf(stderr, "%s: sq_umem: handle: 0x%x offset: 0x%lx size: 0x%x\n",
+	bnxt_trace_dv(NULL, "%s: sq_umem: handle: 0x%x offset: 0x%lx size: 0x%x\n",
 		      __func__, sq_umem->handle, offset, size);
 	req.sq_va = 0;
 	req.sq_umem_offset = offset;
@@ -1394,7 +1393,7 @@ bnxt_re_dv_create_qp_cmd_ext(struct ibv_context *ibvctx,
 				__func__, rq_umem->handle, offset, size);
 			return -EINVAL;
 		}
-		fprintf(stderr, "%s: rq_umem: handle: 0x%x offset: 0x%lx size: 0x%x\n",
+		bnxt_trace_dv(NULL, "%s: rq_umem: handle: 0x%x offset: 0x%lx size: 0x%x\n",
 			      __func__, rq_umem->handle, offset, size);
 
 		req.rq_umem_offset = offset;
@@ -1413,11 +1412,11 @@ bnxt_re_dv_create_qp_cmd_ext(struct ibv_context *ibvctx,
 
 	re_cq = to_bnxt_re_cq(dv_qp_attr->send_cq);
 	fill_attr_in_obj(cmd, BNXT_RE_DV_CREATE_QP_SEND_CQ_HANDLE,
-			 re_cq->ibvcq.handle);
+			 re_cq->verbs_cq.cq.handle);
 
 	re_cq = to_bnxt_re_cq(dv_qp_attr->recv_cq);
 	fill_attr_in_obj(cmd, BNXT_RE_DV_CREATE_QP_RECV_CQ_HANDLE,
-			 re_cq->ibvcq.handle);
+			 re_cq->verbs_cq.cq.handle);
 
 	if (dv_qp_attr->dbr_handle) {
 		db_attr = dv_qp_attr->dbr_handle;
@@ -1447,7 +1446,7 @@ bnxt_re_dv_create_qp_cmd_ext(struct ibv_context *ibvctx,
 		if (rq_umem)
 			rq_umem->umem_qp_count++;
 	}
-	fprintf(stderr, "%s: QP handle: 0x%x qpid: 0x%x\n",
+	bnxt_trace_dv(NULL, "%s: QP handle: 0x%x qpid: 0x%x\n",
 		      __func__, qp->qp_handle, resp->qpid);
 
 	return 0;
@@ -1470,11 +1469,11 @@ bnxt_re_dv_create_qp_ext(struct ibv_pd *ibvpd,
 			return NULL;
 
 		memset(qp, 0, sizeof(*qp));
-		/* ibvqp is the embedded struct ibv_qp in v47 */
-		/* no slab mem in v47 */
+		qp->ibvqp = &qp->vqp.qp;
+		qp->mem = NULL;
 		qp->cctx = &cntx->cctx;
 		qp->cntx = cntx;
-		qp->qpmode = cntx->wqe_mode & BNXT_RE_WQE_MODE_VARIABLE;
+		qp->qpmode = cntx->modes & BNXT_RE_WQE_MODE_VARIABLE;
 		qp->re_pd = to_bnxt_re_pd(ibvpd);
 
 		dv_qp_attr->qp_handle = (uint64_t)qp;
@@ -1498,7 +1497,7 @@ bnxt_re_dv_create_qp_ext(struct ibv_pd *ibvpd,
 	attr_ex.pd = ibvpd;
 
 	bnxt_re_dv_init_qp(ibvpd->context, &attr_ex, qp, &resp);
-	return &qp->ibvqp;
+	return qp->ibvqp;
 }
 
 struct ibv_qp *bnxt_re_dv_create_qp(struct ibv_pd *ibvpd,
@@ -1517,11 +1516,12 @@ int bnxt_re_dv_destroy_qp(struct ibv_qp *ibvqp)
 			       1);
 	struct bnxt_re_qp *qp = to_bnxt_re_qp(ibvqp);
 	struct ibv_context *ibvctx;
+	struct bnxt_re_mem *mem;
 	int ret;
 
 	qp->qpst = IBV_QPS_RESET;
 	fill_attr_in_obj(cmd, BNXT_RE_DV_DESTROY_QP_HANDLE, qp->qp_handle);
-	fprintf(stderr, "%s: QP handle: 0x%x\n", __func__, qp->qp_handle);
+	bnxt_trace_dv(NULL, "%s: QP handle: 0x%x\n", __func__, qp->qp_handle);
 
 	ibvctx = bnxt_re_to_ibvctx(qp->cntx);
 	ret = execute_ioctl(ibvctx, cmd);
@@ -1540,9 +1540,8 @@ int bnxt_re_dv_destroy_qp(struct ibv_qp *ibvqp)
 		bnxt_re_dv_umem_dereg(qp->rq_umem);
 		qp->rq_umem = NULL;
 	}
-	if (qp->jsqq) bnxt_re_free_queues(qp);
-	if (qp->jsqq) bnxt_re_free_queue_ptr(qp);
-	free(qp);
+	mem = qp->mem;
+	bnxt_re_free_mem(mem, NULL);
 	return 0;
 }
 
@@ -1556,11 +1555,11 @@ int bnxt_re_dv_query_qp(void *qp_handle, struct ib_uverbs_qp_attr *qp_attr)
 	struct bnxt_re_qp *qp = to_bnxt_re_qp(ibvqp);
 	int ret;
 
-	fprintf(stderr, DEV "DV Query QP: handle: 0x%x\n", qp->qp_handle);
+	bnxt_trace_dv(NULL, DEV "DV Query QP: handle: 0x%x\n", qp->qp_handle);
 	fill_attr_in_obj(cmd, BNXT_RE_DV_QUERY_QP_HANDLE, qp->qp_handle);
 	fill_attr_out_ptr(cmd, BNXT_RE_DV_QUERY_QP_ATTR, qp_attr);
 
-	ret = execute_ioctl(qp->ibvqp.context, cmd);
+	ret = execute_ioctl(qp->ibvqp->context, cmd);
 	if (ret)
 		fprintf(stderr, DEV "DV Query QP error %d\n", ret);
 
@@ -1637,7 +1636,7 @@ bnxt_re_dv_create_obj_fill_ring_attrs(struct bnxt_re_dv_create_obj_init_attr *at
 	if (attr->send_cq) {
 		re_cq = to_bnxt_re_cq(attr->send_cq);
 		fill_attr_in_obj(cmd, BNXT_RE_DV_CREATE_OBJ_CQ_HANDLE,
-				 re_cq->ibvcq.handle);
+				 re_cq->verbs_cq.cq.handle);
 	}
 
 	return 0;

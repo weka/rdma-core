@@ -1,7 +1,5 @@
 /*
- * Broadcom NetXtreme-E User Space RoCE driver
- *
- * Copyright (c) 2015-2017, Broadcom. All rights reserved.  The term
+ * Copyright (c) 2015-2024, Broadcom. All rights reserved.  The term
  * Broadcom refers to Broadcom Limited and/or its subsidiaries.
  *
  * This software is available to you under a choice of one of two
@@ -36,41 +34,88 @@
  * Description: Implements method to allocate page-aligned memory
  *              buffers.
  */
-
 #include <string.h>
+#include <malloc.h>
 #include <sys/mman.h>
 
 #include "main.h"
 
-int bnxt_re_alloc_aligned(struct bnxt_re_queue *que, uint32_t pg_size)
+void bnxt_re_free_mem(struct bnxt_re_mem *mem,
+		      struct bnxt_re_parent_domain *parent_domain)
 {
-	int ret, bytes;
+	if (!mem)
+		return;
 
-	bytes = (que->depth * que->stride);
-	que->bytes = get_aligned(bytes, pg_size);
-	que->va = mmap(NULL, que->bytes, PROT_READ | PROT_WRITE,
-		       MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-	if (que->va == MAP_FAILED) {
-		que->bytes = 0;
-		return errno;
-	}
-	/* Touch pages before proceeding. */
-	memset(que->va, 0, que->bytes);
-
-	ret = ibv_dontfork_range(que->va, que->bytes);
-	if (ret) {
-		munmap(que->va, que->bytes);
-		que->bytes = 0;
+	if (mem->va_head) {
+		if (parent_domain && parent_domain->free) {
+			parent_domain->free(&parent_domain->pd.ibvpd,
+				parent_domain->pd_context, mem->va_head, 0);
+		} else {
+			ibv_dofork_range(mem->va_head, mem->size);
+			munmap(mem->va_head, mem->size);
+		}
+		mem->va_head = NULL;
 	}
 
-	return ret;
+	free(mem);
 }
 
-void bnxt_re_free_aligned(struct bnxt_re_queue *que)
+void *bnxt_re_alloc_mem(size_t size, uint32_t pg_size,
+			struct bnxt_re_parent_domain *parent_domain)
 {
-	if (que->bytes) {
-		ibv_dofork_range(que->va, que->bytes);
-		munmap(que->va, que->bytes);
-		que->bytes = 0;
+	struct bnxt_re_mem *mem;
+
+	mem = calloc(1, sizeof(*mem));
+	if (!mem)
+		return NULL;
+
+	size = get_aligned(size, pg_size);
+	mem->size = size;
+
+	if (parent_domain && parent_domain->alloc) {
+		mem->va_head = parent_domain->alloc(&parent_domain->pd.ibvpd,
+			parent_domain->pd_context, size, (size_t)pg_size, 0);
+		if (!mem->va_head)
+			goto bail;
+	} else {
+		mem->va_head = mmap(NULL, size, PROT_READ | PROT_WRITE,
+				    MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+		if (mem->va_head == MAP_FAILED)
+			goto bail;
+
+		if (ibv_dontfork_range(mem->va_head, size))
+			goto unmap;
 	}
+
+	mem->head = 0;
+	mem->tail = 0;
+	mem->va_tail = (void *)((char *)mem->va_head + size);
+	return mem;
+unmap:
+	munmap(mem->va_head, size);
+bail:
+	free(mem);
+	return NULL;
+}
+
+void *bnxt_re_get_obj(struct bnxt_re_mem *mem, size_t req)
+{
+	void *va;
+
+	if ((mem->size - mem->tail - req) < mem->head)
+		return NULL;
+	mem->tail += req;
+	va = (void *)((char *)mem->va_tail - mem->tail);
+	return va;
+}
+
+void *bnxt_re_get_ring(struct bnxt_re_mem *mem, size_t req)
+{
+	void *va;
+
+	if ((mem->head + req) > (mem->size - mem->tail))
+		return NULL;
+	va = (void *)((char *)mem->va_head + mem->head);
+	mem->head += req;
+	return va;
 }

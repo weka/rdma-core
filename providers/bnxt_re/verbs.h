@@ -1,7 +1,5 @@
 /*
- * Broadcom NetXtreme-E User Space RoCE driver
- *
- * Copyright (c) 2015-2017, Broadcom. All rights reserved.  The term
+ * Copyright (c) 2015-2024, Broadcom. All rights reserved.  The term
  * Broadcom refers to Broadcom Limited and/or its subsidiaries.
  *
  * This software is available to you under a choice of one of two
@@ -33,11 +31,11 @@
  * OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN
  * IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  *
- * Description: Internal IB-verbs function declaration
+ * Description: Main component of the bnxt_re driver
  */
 
-#ifndef __VERBS_H__
-#define __VERBS_H__
+#ifndef __BNXT_RE_VERBS_H__
+#define __BNXT_RE_VERBS_H__
 
 #include <assert.h>
 #include <stdlib.h>
@@ -47,74 +45,200 @@
 #include <signal.h>
 #include <errno.h>
 #include <pthread.h>
+#include <malloc.h>
 #include <sys/mman.h>
 #include <netinet/in.h>
 #include <unistd.h>
-#include <ccan/list.h>
 
 #include <infiniband/driver.h>
+
 #include <infiniband/verbs.h>
 
-struct bnxt_re_work_compl {
-	struct list_node list;
+#define BNXT_RE_MAX_MSG_SIZE	0x80000000
+
+/* Default MTU set for QPs during create_qp */
+#define BNXT_RE_QP_MTU_DEFAULT  1024
+
+int bnxt_re_query_device_ex(struct ibv_context *ibvctx,
+			    const struct ibv_query_device_ex_input *input,
+			    struct ibv_device_attr_ex *attr, size_t attr_size);
+
+int bnxt_re_query_device_compat(struct ibv_context *ibvctx,
+				struct ibv_device_attr *dev_attr);
+
+int bnxt_re_query_port(struct ibv_context *, uint8_t, struct ibv_port_attr *);
+
+struct ibv_pd *bnxt_re_alloc_pd(struct ibv_context *);
+int bnxt_re_free_pd(struct ibv_pd *);
+
+#ifndef VERBS_MR_DEFINED
+typedef struct ibv_mr VERBS_MR;
+#else
+typedef struct verbs_mr VERBS_MR;
+#endif
+
+struct ibv_mr *bnxt_re_reg_mr(struct ibv_pd *, void *, size_t,
+#ifdef REG_MR_VERB_HAS_5_ARG
+			      uint64_t,
+#endif
+			      int ibv_access_flags);
+int bnxt_re_dereg_mr(VERBS_MR*);
+
+#ifdef HAVE_IBV_DMABUF
+struct ibv_mr *bnxt_re_reg_dmabuf_mr(struct ibv_pd *, uint64_t,
+				     size_t, uint64_t, int, int);
+#endif
+
+struct ibv_cq *bnxt_re_create_cq(struct ibv_context *, int,
+				 struct ibv_comp_channel *, int);
+int bnxt_re_resize_cq(struct ibv_cq *, int);
+int bnxt_re_destroy_cq(struct ibv_cq *);
+int bnxt_re_poll_cq(struct ibv_cq *, int, struct ibv_wc *);
+void bnxt_re_cq_event(struct ibv_cq *);
+int bnxt_re_arm_cq(struct ibv_cq *, int);
+struct ibv_cq_ex *bnxt_re_create_cq_ex(struct ibv_context *ibvctx,
+				       struct ibv_cq_init_attr_ex *attr_ex);
+
+struct ibv_qp *bnxt_re_create_qp(struct ibv_pd *, struct ibv_qp_init_attr *);
+#ifdef HAVE_IBV_WR_API
+struct ibv_qp *bnxt_re_create_qp_ex(struct ibv_context *cntx,
+				    struct ibv_qp_init_attr_ex *attr);
+#endif
+int bnxt_re_modify_qp(struct ibv_qp *, struct ibv_qp_attr *,
+		      int ibv_qp_attr_mask);
+int bnxt_re_query_qp(struct ibv_qp *qp, struct ibv_qp_attr *attr,
+		     int attr_mask, struct ibv_qp_init_attr *init_attr);
+int bnxt_re_destroy_qp(struct ibv_qp *);
+int bnxt_re_post_send(struct ibv_qp *, struct ibv_send_wr *,
+		      struct ibv_send_wr **);
+int bnxt_re_post_recv(struct ibv_qp *, struct ibv_recv_wr *,
+		      struct ibv_recv_wr **);
+
+struct ibv_srq *bnxt_re_create_srq(struct ibv_pd *,
+				   struct ibv_srq_init_attr *);
+int bnxt_re_modify_srq(struct ibv_srq *, struct ibv_srq_attr *, int);
+int bnxt_re_destroy_srq(struct ibv_srq *);
+int bnxt_re_query_srq(struct ibv_srq *ibsrq, struct ibv_srq_attr *attr);
+int bnxt_re_post_srq_recv(struct ibv_srq *, struct ibv_recv_wr *,
+			  struct ibv_recv_wr **);
+
+struct ibv_ah *bnxt_re_create_ah(struct ibv_pd *, struct ibv_ah_attr *);
+int bnxt_re_destroy_ah(struct ibv_ah *);
+
+struct ibv_flow *bnxt_re_create_flow(struct ibv_qp *qp, struct ibv_flow_attr *flow);
+int bnxt_re_destroy_flow(struct ibv_flow *flow);
+
+#ifdef HAVE_WR_BIND_MW
+struct ibv_mw *bnxt_re_alloc_mw(struct ibv_pd *ibv_pd, enum ibv_mw_type type);
+int bnxt_re_dealloc_mw(struct ibv_mw *ibv_mw);
+int bnxt_re_bind_mw(struct ibv_qp *ibv_qp, struct ibv_mw *ibv_mw,
+		    struct ibv_mw_bind *ibv_bind);
+#endif
+
+int bnxt_re_attach_mcast(struct ibv_qp *, const union ibv_gid *, uint16_t);
+int bnxt_re_detach_mcast(struct ibv_qp *, const union ibv_gid *, uint16_t);
+
+#ifdef ASYNC_EVENT_VERB_HAS_1_ARG
+void bnxt_re_async_event(struct ibv_async_event *event);
+#else
+void bnxt_re_async_event(struct ibv_context *context,
+			 struct ibv_async_event *event);
+#endif
+#ifdef HAVE_ECE_OPTIONS
+int bnxt_re_set_ece(struct ibv_qp *ibqp, struct ibv_ece *ece);
+int bnxt_re_query_ece(struct ibv_qp *ibqp, struct ibv_ece *ece);
+#endif
+
+void *bnxt_re_alloc_cqslab(struct bnxt_re_context *cntx,
+			   uint32_t ncqe, uint32_t cur);
+int bnxt_re_check_qp_limits(struct bnxt_re_context *cntx,
+			    struct ibv_qp_init_attr_ex *attr);
+void *bnxt_re_alloc_qpslab(struct bnxt_re_context *cntx,
+			   struct ibv_qp_init_attr_ex *attr,
+			   struct bnxt_re_qattr *qattr);
+int bnxt_re_alloc_queue_ptr(struct bnxt_re_qp *qp,
+			    struct ibv_qp_init_attr_ex *attr);
+int bnxt_re_alloc_queues(struct bnxt_re_qp *qp,
+			 struct ibv_qp_init_attr_ex *attr,
+			 struct bnxt_re_qattr *qattr);
+void bnxt_re_cleanup_cq(struct bnxt_re_qp *qp,
+			struct bnxt_re_cq *cq);
+int bnxt_re_get_sqmem_size(struct bnxt_re_context *cntx,
+			   struct ibv_qp_init_attr_ex *attr,
+			   struct bnxt_re_qattr *qattr);
+int bnxt_re_get_rqmem_size(struct bnxt_re_context *cntx,
+			   struct ibv_qp_init_attr_ex *attr,
+			   struct bnxt_re_qattr *qattr);
+
+struct bnxt_re_work_compl{
+	struct bnxt_re_list_node cnode;
 	struct ibv_wc wc;
 };
 
-int bnxt_re_query_device(struct ibv_context *context,
-			 const struct ibv_query_device_ex_input *input,
-			 struct ibv_device_attr_ex *attr, size_t attr_size);
-int bnxt_re_query_port(struct ibv_context *uctx, uint8_t port,
-		       struct ibv_port_attr *attr);
-struct ibv_pd *bnxt_re_alloc_pd(struct ibv_context *uctx);
-int bnxt_re_free_pd(struct ibv_pd *ibvpd);
-struct ibv_mr *bnxt_re_reg_mr(struct ibv_pd *ibvpd, void *buf, size_t len,
-			      uint64_t hca_va, int ibv_access_flags);
-int bnxt_re_dereg_mr(struct verbs_mr *vmr);
+static inline uint8_t bnxt_re_get_psne_size(struct bnxt_re_context *cntx)
+{
+	return (BNXT_RE_MSN_TBL_EN(cntx)) ? sizeof(struct bnxt_re_msns) :
+					      (cntx->cctx.chip_is_gen_p5_p7) ?
+					      sizeof(struct bnxt_re_psns_ext) :
+					      sizeof(struct bnxt_re_psns);
+}
 
-struct ibv_cq *bnxt_re_create_cq(struct ibv_context *uctx, int ncqe,
-				 struct ibv_comp_channel *ch, int vec);
-int bnxt_re_resize_cq(struct ibv_cq *ibvcq, int ncqe);
-int bnxt_re_destroy_cq(struct ibv_cq *ibvcq);
-int bnxt_re_poll_cq(struct ibv_cq *ibvcq, int nwc, struct ibv_wc *wc);
-int bnxt_re_arm_cq(struct ibv_cq *ibvcq, int flags);
+static inline uint32_t bnxt_re_get_npsn(uint8_t mode, uint32_t nwr,
+					uint32_t slots)
+{
+	return mode == BNXT_RE_WQE_MODE_VARIABLE ? slots : nwr;
+}
 
-struct ibv_qp *bnxt_re_create_qp(struct ibv_pd *ibvpd,
-				 struct ibv_qp_init_attr *attr);
-int bnxt_re_modify_qp(struct ibv_qp *ibvqp, struct ibv_qp_attr *attr,
-		      int ibv_qp_attr_mask);
-int bnxt_re_query_qp(struct ibv_qp *ibvqp, struct ibv_qp_attr *attr,
-		     int attr_mask, struct ibv_qp_init_attr *init_attr);
-int bnxt_re_destroy_qp(struct ibv_qp *ibvqp);
-int bnxt_re_post_send(struct ibv_qp *ibvqp, struct ibv_send_wr *wr,
-		      struct ibv_send_wr **bad);
-int bnxt_re_post_recv(struct ibv_qp *ibvqp, struct ibv_recv_wr *wr,
-		      struct ibv_recv_wr **bad);
+static inline bool bnxt_re_is_mqp_ex_supported(struct bnxt_re_context *cntx)
+{
+	return cntx->comp_mask & BNXT_RE_UCNTX_CMASK_MQP_EX_SUPPORTED;
+}
 
-struct ibv_srq *bnxt_re_create_srq(struct ibv_pd *ibvpd,
-				   struct ibv_srq_init_attr *attr);
-int bnxt_re_modify_srq(struct ibv_srq *ibvsrq,
-		       struct ibv_srq_attr *attr, int mask);
-int bnxt_re_destroy_srq(struct ibv_srq *ibvsrq);
-int bnxt_re_query_srq(struct ibv_srq *ibvsrq, struct ibv_srq_attr *attr);
-int bnxt_re_post_srq_recv(struct ibv_srq *ibvsrq, struct ibv_recv_wr *wr,
-			  struct ibv_recv_wr **bad);
+static inline bool can_request_ppp(struct bnxt_re_qp *re_qp,
+				   struct ibv_qp_attr *attr, int attr_mask)
+{
+	struct bnxt_re_context *cntx;
+	struct bnxt_re_qp *qp;
+	bool request = false;
 
-struct ibv_ah *bnxt_re_create_ah(struct ibv_pd *ibvpd,
-				 struct ibv_ah_attr *attr);
-int bnxt_re_destroy_ah(struct ibv_ah *ibvah);
+	qp = re_qp;
+	cntx = qp->cntx;
+	if (!qp->push_st_en && cntx->udpi.wcdpi && (attr_mask & IBV_QP_STATE) &&
+	    qp->qpst == IBV_QPS_RESET && attr->qp_state == IBV_QPS_INIT &&
+	    qp->cap.max_inline) {
+		pthread_mutex_lock(&cntx->shlock);
+		if (cntx->ppp_cnt < BNXT_RE_PUSH_MAX_PPP_PER_CTX) {
+			cntx->ppp_cnt++;
+			request = true;
+		}
+		pthread_mutex_unlock(&cntx->shlock);
+	}
+	return request;
+}
 
+static inline uint64_t bnxt_re_update_msn_tbl(uint32_t st_idx, uint32_t npsn, uint32_t start_psn)
+{
+	/* Adjust the field values to their respective ofsets */
+	return htole64((((uint64_t)(st_idx) << BNXT_RE_SQ_MSN_SEARCH_START_IDX_SHIFT) &
+		 BNXT_RE_SQ_MSN_SEARCH_START_IDX_MASK) |
+		 (((uint64_t)(npsn) << BNXT_RE_SQ_MSN_SEARCH_NEXT_PSN_SHIFT) &
+		 BNXT_RE_SQ_MSN_SEARCH_NEXT_PSN_MASK) |
+		 (((start_psn) << BNXT_RE_SQ_MSN_SEARCH_START_PSN_SHIFT) &
+		 BNXT_RE_SQ_MSN_SEARCH_START_PSN_MASK));
+}
 
-/* Internal functions exposed for DV use */
-void bnxt_re_cleanup_cq(struct bnxt_re_qp *qp, struct bnxt_re_cq *cq);
-int bnxt_re_check_qp_limits(struct bnxt_re_context *cntx,
-			    struct ibv_qp_init_attr *attr);
-void bnxt_re_free_queue_ptr(struct bnxt_re_qp *qp);
-int bnxt_re_alloc_queue_ptr(struct bnxt_re_qp *qp,
-			   struct ibv_qp_init_attr *attr);
-void bnxt_re_free_queues(struct bnxt_re_qp *qp);
-int bnxt_re_alloc_queues(struct bnxt_re_dev *dev,
-			struct bnxt_re_qp *qp,
-			struct ibv_qp_init_attr *attr,
-			uint32_t pg_size);
+static inline int bnxt_re_get_max_inline_size(struct bnxt_re_context *cntx)
+{
+	if (cntx->cctx.chip_is_p8)
+		return BNXT_RE_MAX_WCB_SIZE_VAR_WQE_TH3C;
+	else
+		return BNXT_RE_MAX_WCB_SIZE_VAR_WQE;
+}
 
+#define BNXT_RE_MSN_IDX(m) (((m) & BNXT_RE_SQ_MSN_SEARCH_START_IDX_MASK) >> \
+		BNXT_RE_SQ_MSN_SEARCH_START_IDX_SHIFT)
+#define BNXT_RE_MSN_NPSN(m) (((m) & BNXT_RE_SQ_MSN_SEARCH_NEXT_PSN_MASK) >> \
+		BNXT_RE_SQ_MSN_SEARCH_NEXT_PSN_SHIFT)
+#define BNXT_RE_MSN_SPSN(m) (((m) & BNXT_RE_SQ_MSN_SEARCH_START_PSN_MASK) >> \
+		BNXT_RE_SQ_MSN_SEARCH_START_PSN_SHIFT)
 #endif /* __BNXT_RE_VERBS_H__ */
