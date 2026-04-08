@@ -558,7 +558,8 @@ int ibverbs_get_device_list(struct list_head *device_list)
 	int ret;
 
 	ret = find_sysfs_devs_nl(&sysfs_list);
-	if (ret) {
+	if (ret || list_empty(&sysfs_list)) {
+		/* Netlink failed or returned empty list; try sysfs fallback */
 		ret = find_sysfs_devs(&sysfs_list);
 		if (ret)
 			return -ret;
