@@ -343,4 +343,45 @@ struct bnxt_re_srqe {
 struct bnxt_re_push_wqe {
 	__u64 addr[32];
 };
+
+/* Extended context response fields from Broadcom 238 kernel driver.
+ * These fields follow the standard bnxt_re_uctx_resp in the kernel's
+ * GET_CONTEXT response when using the 238 bifurcated driver.
+ */
+struct bnxt_re_uctx_resp_ext {
+	__u8 db_push_mode;
+	__u32 max_rq_wqes;
+	__u64 uc_db_mmap_key;
+	__u64 wc_db_mmap_key;
+	__u32 wcdpi;
+	__u32 dpi;
+	__u8 deferred_db_enabled;
+	__u64 uc_db_offset;
+} __attribute__((packed));
+
+/* Combined response: standard + extended */
+struct bnxt_re_uctx_resp_full {
+	/* Standard fields (matches kernel bnxt_re_uctx_resp) */
+	__u32 dev_id;
+	__u32 max_qp;
+	__u32 pg_size;
+	__u32 cqe_sz;
+	__u32 max_cqd;
+	__u32 rsvd;
+	__aligned_u64 comp_mask;
+	__u32 chip_id0;
+	__u32 chip_id1;
+	__u32 mode;
+	__u32 rsvd1;
+	/* Extended fields from 238 driver */
+	__u8 db_push_mode;
+	__u32 max_rq_wqes;
+	__u64 uc_db_mmap_key;
+	__u64 wc_db_mmap_key;
+	__u32 wcdpi;
+	__u32 dpi;
+	__u8 deferred_db_enabled;
+	__u64 uc_db_offset;
+} __attribute__((packed));
+
 #endif

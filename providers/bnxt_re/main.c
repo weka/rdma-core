@@ -133,7 +133,13 @@ static struct verbs_context *bnxt_re_alloc_context(struct ibv_device *vdev,
 						   void *private_data)
 {
 	struct bnxt_re_dev *rdev = to_bnxt_re_dev(vdev);
-	struct ubnxt_re_cntx_resp resp;
+	/* Use a larger response buffer to capture 238 extended fields */
+	struct {
+		struct ib_uverbs_get_context_resp ibv_resp;
+		struct bnxt_re_uctx_resp_full drv_resp;
+	} resp_buf;
+	#define resp resp_buf.drv_resp
+	struct { struct ib_uverbs_get_context_resp ibv_resp; } *resp_p = (void *)&resp_buf;
 	struct bnxt_re_context *cntx;
 	struct ibv_get_context cmd;
 	int ret;
@@ -145,7 +151,7 @@ static struct verbs_context *bnxt_re_alloc_context(struct ibv_device *vdev,
 
 	memset(&resp, 0, sizeof(resp));
 	if (ibv_cmd_get_context(&cntx->ibvctx, &cmd, sizeof(cmd),
-				&resp.ibv_resp, sizeof(resp)))
+				&resp_buf.ibv_resp, sizeof(resp_buf)))
 		goto failed;
 
 	cntx->dev_id = resp.dev_id;
@@ -177,6 +183,24 @@ static struct verbs_context *bnxt_re_alloc_context(struct ibv_device *vdev,
 		goto failed;
 	}
 	pthread_mutex_init(&cntx->shlock, NULL);
+
+	/* Broadcom 238 bifurcated driver: mmap doorbell page */
+	if (resp.uc_db_mmap_key) {
+		cntx->udpi.dpindx = resp.dpi;
+		cntx->udpi.dbpage = mmap(NULL, rdev->pg_size,
+					 PROT_WRITE, MAP_SHARED,
+					 cmd_fd, resp.uc_db_mmap_key);
+		if (cntx->udpi.dbpage == MAP_FAILED) {
+			cntx->udpi.dbpage = NULL;
+			fprintf(stderr, "bnxt_re: doorbell mmap failed\n");
+		} else {
+			cntx->udpi.dbpage = (void *)cntx->udpi.dbpage +
+					    resp.uc_db_offset;
+			fprintf(stderr, "bnxt_re: doorbell mapped at %p dpi=%u\n",
+				cntx->udpi.dbpage, resp.dpi);
+		}
+	}
+	#undef resp
 
 	verbs_set_ops(&cntx->ibvctx, &bnxt_re_cntx_ops);
 	cntx->rdev = rdev;
