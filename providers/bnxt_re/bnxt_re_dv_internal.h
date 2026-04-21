@@ -1,7 +1,6 @@
+/* SPDX-License-Identifier: GPL-2.0-only */
 /*
- * Broadcom NetXtreme-E User Space RoCE driver
- *
- * Copyright (c) 2015-2017, Broadcom. All rights reserved.  The term
+ * Copyright (c) 2025, Broadcom. All rights reserved.  The term
  * Broadcom refers to Broadcom Limited and/or its subsidiaries.
  *
  * This software is available to you under a choice of one of two
@@ -33,53 +32,55 @@
  * OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN
  * IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  *
- * Description: A few wrappers for flush queue management
+ * Description: Direct verb support user interface header
  */
 
-#ifndef __FLUSH_H__
-#define __FLUSH_H__
+#ifndef __BNXT_RE_DV_INTERNAL_H__
+#define __BNXT_RE_DV_INTERNAL_H__
 
-#include <ccan/list.h>
+#include <stdint.h>
+#include <infiniband/verbs.h>
 
-struct bnxt_re_fque_node {
-	uint8_t valid;
-	struct list_node list;
+struct bnxt_re_dv_umem {
+	struct ibv_context *context;
+	uint32_t handle;
+	void *addr;
+	size_t size;
+
+	/* The below member is only used if QP memory helper
+	 * API is utilized by the application, to track QPs
+	 * that share the same umem. Note that the app is
+	 * expected to allocate memory for SQs and RQs in
+	 * two separate chunks.
+	 */
+	int umem_qp_count;
 };
 
-static inline void fque_init_node(struct bnxt_re_fque_node *node)
-{
-	list_node_init(&node->list);
-	node->valid = false;
-}
+struct bnxt_re_dv_qp_init_attr_internal {
+	/* Standard ibv params */
+	enum ibv_qp_type qp_type;
+	uint32_t max_send_wr;
+	uint32_t max_recv_wr;
+	uint32_t max_send_sge;
+	uint32_t max_recv_sge;
+	uint32_t max_inline_data;
+	uint32_t pdid;
+	void *send_cq;
+	void *recv_cq;
 
-static inline void fque_add_node_tail(struct list_head *head,
-				      struct bnxt_re_fque_node *new)
-{
-	list_add_tail(head, &new->list);
-	new->valid = true;
-}
+	/* DV params */
+	uint64_t qp_handle;     /* to match with cqe */
+	uint64_t sq_va;         /* Peer-mem sq-va (not dma mapped) */
+	uint32_t sq_len;        /* sq length including MSN area */
+	uint32_t sq_slots;      /* sq length in slots */
+	uint32_t sq_wqe_sz;     /* sq wqe size */
+	uint32_t sq_psn_sz;     /* sq psn size */
+	uint32_t sq_npsn;       /* sq num psn entries */
+	uint64_t rq_va;         /* Peer-mem rq-va (not dma mapped) */
+	uint32_t rq_len;        /* rq length */
+	uint32_t rq_slots;      /* rq length in slots */
+	uint32_t rq_wqe_sz;     /* rq wqe size */
+	uint64_t comp_mask;     /* compatibility bit mask */
+};
 
-static inline void fque_del_node(struct bnxt_re_fque_node *entry)
-{
-	entry->valid = false;
-	list_del(&entry->list);
-}
-
-static inline uint8_t _fque_node_valid(struct bnxt_re_fque_node *node)
-{
-	return node->valid;
-}
-
-static inline void bnxt_re_fque_add_node(struct list_head *head,
-					 struct bnxt_re_fque_node *node)
-{
-	if (!_fque_node_valid(node))
-		fque_add_node_tail(head, node);
-}
-
-static inline void bnxt_re_fque_del_node(struct bnxt_re_fque_node *node)
-{
-	if (_fque_node_valid(node))
-		fque_del_node(node);
-}
-#endif	/* __FLUSH_H__ */
+#endif /* __BNXT_RE_DV_INTERNAL_H__ */
