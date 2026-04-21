@@ -1,0 +1,27 @@
+/* Export symbols should be added below according to
+   Documentation/versioning.md document. */
+BNXT_RE_1.0 {
+	global:
+		bnxt_re_dv_modify_qp_udp_sport;
+		bnxt_re_dv_alloc_db_region;
+		bnxt_re_dv_free_db_region;
+		bnxt_re_dv_umem_reg;
+		bnxt_re_dv_umem_dereg;
+		bnxt_re_dv_get_default_db_region;
+		bnxt_re_dv_create_cq;
+		bnxt_re_dv_destroy_cq;
+		bnxt_re_dv_create_qp;
+		bnxt_re_dv_destroy_qp;
+		bnxt_re_dv_modify_qp;
+		bnxt_re_dv_query_qp;
+		bnxt_re_dv_qp_mem_alloc;
+		bnxt_re_dv_qp_get_mem_info;
+		bnxt_re_dv_init_obj;
+		bnxt_re_dv_get_cq_attr;
+		bnxt_re_dv_cq_mem_alloc;
+		bnxt_re_dv_send_fw_msg;
+		bnxt_re_dv_create_obj;
+		bnxt_re_dv_destroy_obj;
+		bnxt_re_dv_send_pt;
+	local: *;
+};

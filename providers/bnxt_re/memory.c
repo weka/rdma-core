@@ -1,7 +1,5 @@
 /*
- * Broadcom NetXtreme-E User Space RoCE driver
- *
- * Copyright (c) 2015-2017, Broadcom. All rights reserved.  The term
+ * Copyright (c) 2015-2024, Broadcom. All rights reserved.  The term
  * Broadcom refers to Broadcom Limited and/or its subsidiaries.
  *
  * This software is available to you under a choice of one of two
@@ -36,25 +34,34 @@
  * Description: Implements method to allocate page-aligned memory
  *              buffers.
  */
-
 #include <string.h>
 #include <malloc.h>
 #include <sys/mman.h>
-#include <util/util.h>
 
 #include "main.h"
 
-void bnxt_re_free_mem(struct bnxt_re_mem *mem)
+void bnxt_re_free_mem(struct bnxt_re_mem *mem,
+		      struct bnxt_re_parent_domain *parent_domain)
 {
+	if (!mem)
+		return;
+
 	if (mem->va_head) {
-		ibv_dofork_range(mem->va_head, mem->size);
-		munmap(mem->va_head, mem->size);
+		if (parent_domain && parent_domain->free) {
+			parent_domain->free(&parent_domain->pd.ibvpd,
+				parent_domain->pd_context, mem->va_head, 0);
+		} else {
+			ibv_dofork_range(mem->va_head, mem->size);
+			munmap(mem->va_head, mem->size);
+		}
+		mem->va_head = NULL;
 	}
 
 	free(mem);
 }
 
-void *bnxt_re_alloc_mem(size_t size, uint32_t pg_size)
+void *bnxt_re_alloc_mem(size_t size, uint32_t pg_size,
+			struct bnxt_re_parent_domain *parent_domain)
 {
 	struct bnxt_re_mem *mem;
 
@@ -62,15 +69,23 @@ void *bnxt_re_alloc_mem(size_t size, uint32_t pg_size)
 	if (!mem)
 		return NULL;
 
-	size = align(size, pg_size);
+	size = get_aligned(size, pg_size);
 	mem->size = size;
-	mem->va_head = mmap(NULL, size, PROT_READ | PROT_WRITE,
-			    MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-	if (mem->va_head == MAP_FAILED)
-		goto bail;
 
-	if (ibv_dontfork_range(mem->va_head, size))
-		goto unmap;
+	if (parent_domain && parent_domain->alloc) {
+		mem->va_head = parent_domain->alloc(&parent_domain->pd.ibvpd,
+			parent_domain->pd_context, size, (size_t)pg_size, 0);
+		if (!mem->va_head)
+			goto bail;
+	} else {
+		mem->va_head = mmap(NULL, size, PROT_READ | PROT_WRITE,
+				    MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+		if (mem->va_head == MAP_FAILED)
+			goto bail;
+
+		if (ibv_dontfork_range(mem->va_head, size))
+			goto unmap;
+	}
 
 	mem->head = 0;
 	mem->tail = 0;

@@ -1,7 +1,5 @@
 /*
- * Broadcom NetXtreme-E User Space RoCE driver
- *
- * Copyright (c) 2015-2017, Broadcom. All rights reserved.  The term
+ * Copyright (c) 2015-2024, Broadcom. All rights reserved.  The term
  * Broadcom refers to Broadcom Limited and/or its subsidiaries.
  *
  * This software is available to you under a choice of one of two
@@ -37,11 +35,12 @@
  *              memory buffer.
  */
 
-#ifndef __MEMORY_H__
-#define __MEMORY_H__
+#ifndef __BNXT_RE_MEMORY_H__
+#define __BNXT_RE_MEMORY_H__
 
 #include <pthread.h>
 #include "main.h"
+#include "bnxt_re_hsi.h"
 
 struct bnxt_re_mem {
 	void *va_head;
@@ -58,22 +57,32 @@ struct bnxt_re_qattr {
 	uint32_t esize;
 	uint32_t slots;
 	uint32_t nwr;
+	uint32_t psn_sz;
+	uint32_t npsn;
 	uint32_t sz_ring;
 	uint32_t sz_shad;
 	uint32_t sw_nwr;
+	bool exp_mode;
+};
+
+/* spin lock wrapper struct */
+struct bnxt_spinlock {
+	pthread_spinlock_t lock;
+	int in_use;
+	int need_lock;
 };
 
 struct bnxt_re_queue {
-	void *va;
+	struct bnxt_spinlock qlock;
 	uint32_t flags;
 	uint32_t *dbtail;
-	uint32_t bytes; /* for munmap */
-	uint32_t depth; /* no. of entries */
+	void *va;
 	uint32_t head;
-	uint32_t tail;
-	uint32_t stride;
+	uint32_t depth; /* no. of entries */
 	void *pad; /* to hold the padding area */
 	uint32_t pad_stride_log2;
+	uint32_t tail;
+	uint32_t max_slots;
 	/* Represents the difference between the real queue depth allocated in
 	 * HW and the user requested queue depth and is used to correctly flag
 	 * queue full condition based on user supplied queue depth.
@@ -82,9 +91,7 @@ struct bnxt_re_queue {
 	 * and the consumer indices in the queue
 	 */
 	uint32_t diff;
-	uint32_t esize;
-	uint32_t max_slots;
-	pthread_spinlock_t qlock;
+	uint32_t stride;
 	uint32_t msn;
 	uint32_t msn_tbl_sz;
 	/*
@@ -97,6 +104,23 @@ struct bnxt_re_queue {
 	uint32_t old_head;
 };
 
+static inline unsigned long get_aligned(uint64_t size, uint64_t al_size)
+{
+	return (unsigned long) (size + al_size - 1) & ~(al_size - 1);
+}
+
+static inline unsigned long roundup_pow_of_two(unsigned long val)
+{
+	unsigned long roundup = 1;
+
+	if (val == 1)
+		return (roundup << 1);
+
+	while (roundup < val)
+		roundup <<= 1;
+
+	return roundup;
+}
 
 /* Basic queue operation */
 static inline void *bnxt_re_get_hwqe(struct bnxt_re_queue *que, uint32_t idx)
@@ -130,7 +154,7 @@ static inline uint32_t bnxt_re_is_que_empty(struct bnxt_re_queue *que)
 	return que->tail == que->head;
 }
 
-static inline void bnxt_re_incr_tail(struct bnxt_re_queue *que, uint8_t cnt)
+static inline void bnxt_re_incr_tail(struct bnxt_re_queue *que, uint32_t cnt)
 {
 	que->tail += cnt;
 	if (que->tail >= que->depth) {
@@ -148,10 +172,15 @@ static inline void bnxt_re_incr_head(struct bnxt_re_queue *que, uint8_t cnt)
 		/* Rolled over, Toggle HEAD bit in epoch flags */
 		que->flags ^= 1UL << BNXT_RE_FLAG_EPOCH_HEAD_SHIFT;
 	}
+
 }
 
-void bnxt_re_free_mem(struct bnxt_re_mem *mem);
-void *bnxt_re_alloc_mem(size_t size, uint32_t pg_size);
+struct bnxt_re_parent_domain;
+
+void bnxt_re_free_mem(struct bnxt_re_mem *mem,
+		      struct bnxt_re_parent_domain *parent_domain);
+void *bnxt_re_alloc_mem(size_t size, uint32_t pg_size,
+			struct bnxt_re_parent_domain *parent_domain);
 void *bnxt_re_get_obj(struct bnxt_re_mem *mem, size_t req);
 void *bnxt_re_get_ring(struct bnxt_re_mem *mem, size_t req);
 
