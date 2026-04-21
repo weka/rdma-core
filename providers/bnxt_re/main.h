@@ -46,7 +46,6 @@
 #include <endian.h>
 #include <pthread.h>
 #include <sys/param.h>
-#include <math.h>
 #include <stdio.h>
 #include <stdarg.h>
 
@@ -54,6 +53,7 @@
 #include <util/udma_barrier.h>
 #include <util/mmio.h>
 #include <ccan/minmax.h>
+#include <ccan/ilog.h>
 
 #include "version.h"
 #include "compat.h"

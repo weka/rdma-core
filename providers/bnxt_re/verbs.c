@@ -2558,7 +2558,7 @@ int bnxt_re_alloc_queues(struct bnxt_re_qp *qp,
 	 */
 	que->pad = (que->va + que->depth * que->stride);
 	psn_size = bnxt_re_get_psne_size(qp->cntx);
-	que->pad_stride_log2 = (uint32_t)log2((double)psn_size);
+	que->pad_stride_log2 = (uint32_t)(ilog32_nz(psn_size) - 1);
 
 	ret = bnxt_re_alloc_init_swque(qp->jsqq, qp->mem, &qattr[indx]);
 	if (ret)
