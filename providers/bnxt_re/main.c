@@ -100,7 +100,8 @@ BNXT_RE_DEFINE_CNA_TABLE(cna_table) = {
 	CNA(BROADCOM, 0xD800),  /* BCM880xx SR VF */
 	CNA(BROADCOM, 0xD802),  /* BCM58802 SR */
 	CNA(BROADCOM, 0xD804),  /* BCM58804 SR */
-	CNA(BROADCOM, 0xD818)   /* BCM58818 Gen P5 SR2 */
+	CNA(BROADCOM, 0xD818),  /* BCM58818 Gen P5 SR2 */
+	{}
 };
 
 uint32_t bnxt_debug_mask;
@@ -206,14 +207,19 @@ static inline bool bnxt_re_is_wcdpi_enabled(struct bnxt_re_context *cntx)
 static int bnxt_re_map_db_page(struct bnxt_re_context *cntx, __u32 pg_size,
 			       int cmd_fd, struct bnxt_re_uctx_resp *uctx_resp)
 {
+	uint32_t uc_db_offset = 0;
+
+	if (cntx->comp_mask & BNXT_RE_UCNTX_CMASK_UC_DB_OFFSET)
+		uc_db_offset = uctx_resp->uc_db_offset;
+
 	cntx->udpi.dpindx = uctx_resp->dpi;
 	cntx->udpi.dbpage = mmap(NULL, pg_size, PROT_WRITE,
 				 MAP_SHARED, cmd_fd, uctx_resp->uc_db_mmap_key);
 	if (cntx->udpi.dbpage == MAP_FAILED)
 		return -ENOMEM;
 
-	cntx->udpi.dbpage = (void *)cntx->udpi.dbpage + uctx_resp->uc_db_offset;
-	cntx->udpi.dbpage_offset = uctx_resp->uc_db_offset;
+	cntx->udpi.dbpage = (void *)cntx->udpi.dbpage + uc_db_offset;
+	cntx->udpi.dbpage_offset = uc_db_offset;
 
 #ifdef BNXT_RE_HAVE_DB_LOCK
 	pthread_spin_init(&cntx->udpi.db_lock, PTHREAD_PROCESS_PRIVATE);

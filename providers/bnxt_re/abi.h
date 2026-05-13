@@ -37,7 +37,14 @@
 #ifndef __BNXT_RE_ABI_H__
 #define __BNXT_RE_ABI_H__
 
+/* WEKA: always use the installed-system header path. The upstream drop's
+ * IBVERBS_PABI_VERSION>=17 branch references <kern-abi.h> which is the
+ * in-tree relative path in the rdma-core source layout; our build
+ * compiles against installed rdma-core headers where only
+ * <infiniband/kern-abi.h> is exposed.
+ */
 #include <infiniband/kern-abi.h>
+
 #include <rdma/ib_user_ioctl_cmds.h>
 
 #define true			1
@@ -78,6 +85,7 @@ enum {
 	BNXT_RE_UCNTX_CMASK_DEFERRED_DB_ENABLED = 0x20000,
 	BNXT_RE_UCNTX_CMASK_INLINE_OPTIMIZER_SUPPORTED = 0x40000,
 	BNXT_RE_UCNTX_CMASK_COMPLETION_TS_SUPPORTED = 0x80000,
+	BNXT_RE_UCNTX_CMASK_UC_DB_OFFSET = 0x100000,
 	BNXT_RE_UCNTX_CMASK_OOB_DRIVER = 0x8000000000000000ULL,
 };
 
@@ -114,15 +122,15 @@ struct bnxt_re_uctx_resp {
 	__u32 chip_id0;
 	__u32 chip_id1;
 	__u32 mode;
-	__u32 rsvd1; /* padding */
-	__u8 db_push_mode;
+	__u32 uc_db_offset;
 	__u32 max_rq_wqes;
+	__u32 wcdpi;
 	__u64 uc_db_mmap_key;
 	__u64 wc_db_mmap_key;
-	__u32 wcdpi;
 	__u32 dpi;
+	__u8 db_push_mode;
 	__u8 deferred_db_enabled;
-	__u64 uc_db_offset;
+	__u16 rsvd1;
 };
 
 enum {
@@ -154,6 +162,7 @@ struct bnxt_re_mr_resp {
 struct bnxt_re_ah_resp {
 	struct ib_uverbs_create_ah_resp resp;
 	__u32 ah_id;
+	__u32 rsvd;
 	__u64 comp_mask;
 };
 
@@ -191,6 +200,7 @@ struct bnxt_re_cq_req_ex {
 	__u64 cqconsva;
 	__u64 cq_wc;
 	__u32 cq_wc_sz;
+	__u32 rsvd;
 };
 
 enum bnxt_re_cq_mask {
@@ -246,6 +256,7 @@ struct bnxt_re_qp_resp {
 	__u32 rsvd;
 	__aligned_u64 comp_mask;
 	__u32 hdbr_dt;
+	__u32 rsvd1;
 	__u64 hdbr_kaddr_sq;
 	__u64 hdbr_kaddr_rq;
 };

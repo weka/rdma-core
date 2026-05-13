@@ -53,6 +53,7 @@
 #include <unistd.h>
 
 #include <infiniband/driver.h>
+
 #include <infiniband/verbs.h>
 
 #define BNXT_RE_MAX_MSG_SIZE	0x80000000

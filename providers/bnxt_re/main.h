@@ -49,6 +49,10 @@
 #include <stdio.h>
 #include <stdarg.h>
 
+/* We always build in-tree against rdma-core. Use ccan/ilog.h's
+ * ilog32_nz() helper instead of <math.h> log2() so we don't have to
+ * link against libm.
+ */
 #include <infiniband/driver.h>
 #include <util/udma_barrier.h>
 #include <util/mmio.h>
@@ -245,6 +249,7 @@ struct bnxt_re_cq {
 	bool umem_reg;
 	bool ts_cq;
 	struct bnxt_re_wc current_wc;
+	struct ibv_wc c_wc;
 	struct bnxt_re_parent_domain *parent_domain;
 };
 
