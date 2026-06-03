@@ -32,7 +32,10 @@
 
 #include <util/rdma_nl.h>
 
+#include <errno.h>
 #include <stdbool.h>
+#include <stdio.h>
+#include <string.h>
 #include <sys/sysmacros.h>
 
 struct nla_policy rdmanl_policy[RDMA_NLDEV_ATTR_MAX] = {
@@ -160,8 +163,11 @@ int rdmanl_get_chardev(struct nl_sock *nl, int ibidx, const char *name,
 	} while (ret > 0);
 	nl_socket_modify_err_cb(nl, NL_CB_CUSTOM, NULL, NULL);
 
-	if (ret || failed)
+	if (ret || failed) {
+		fprintf(stderr, "Rita DEBUG rdmanl_get_chardev: failed ret=%d failed=%d errno=%d (%s)\n",
+			ret, (int)failed, errno, strerror(errno));
 		return -1;
+	}
 	return 0;
 
 nla_put_failure:

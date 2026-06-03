@@ -441,7 +441,7 @@ static struct verbs_device *try_drivers(struct verbs_sysfs_dev *sysfs_dev)
 	struct ibv_driver *driver;
 	struct verbs_device *dev;
 
-	fprintf(stderr, "Rita DEBUG: try_drivers for device %s, driver_id=%d\n",
+	fprintf(stderr, "Rita0 DEBUG: try_drivers for device %s, driver_id=%d\n",
 		sysfs_dev->ibdev_name, sysfs_dev->driver_id);
 
 	/*
@@ -449,47 +449,24 @@ static struct verbs_device *try_drivers(struct verbs_sysfs_dev *sysfs_dev)
 	 * first.
 	 */
 	if (sysfs_dev->driver_id != RDMA_DRIVER_UNKNOWN) {
-		fprintf(stderr, "Rita DEBUG: Trying driver_id match for %s (id=%d)\n",
-			sysfs_dev->ibdev_name, sysfs_dev->driver_id);
-        fprintf(stderr, "Ritamana  RDMA_DRIVER_MANA = %d\n", RDMA_DRIVER_MANA);
 		list_for_each (&driver_list, driver, entry) {
+			fprintf(stderr, "Rita1 DEBUG: trying driver %s for device %s\n",
+				driver->ops->name, sysfs_dev->ibdev_name);
 			if (match_driver_id(driver->ops, sysfs_dev)) {
-				fprintf(stderr, "Rita DEBUG: Matched driver_id, trying driver ops\n");
 				dev = try_driver(driver->ops, sysfs_dev);
-				if (dev) {
-					fprintf(stderr, "Rita DEBUG: Successfully created device\n");
+				if (dev)
 					return dev;
-				}
 			}
 		}
-	} else {
-		fprintf(stderr, "Rita DEBUG: driver_id is UNKNOWN for %s, trying all drivers\n",
-			sysfs_dev->ibdev_name);
-		fprintf(stderr, "Rita DEBUG: rdma_driver_id enum values:\n");
-		fprintf(stderr, "  RDMA_DRIVER_UNKNOWN = %d\n", RDMA_DRIVER_UNKNOWN);
-		fprintf(stderr, "  RDMA_DRIVER_MLX5 = %d\n", RDMA_DRIVER_MLX5);
-		fprintf(stderr, "  RDMA_DRIVER_MLX4 = %d\n", RDMA_DRIVER_MLX4);
-		fprintf(stderr, "  RDMA_DRIVER_CXGB3 = %d\n", RDMA_DRIVER_CXGB3);
-		fprintf(stderr, "  RDMA_DRIVER_CXGB4 = %d\n", RDMA_DRIVER_CXGB4);
-		fprintf(stderr, "  RDMA_DRIVER_MTHCA = %d\n", RDMA_DRIVER_MTHCA);
-		fprintf(stderr, "  RDMA_DRIVER_BNXT_RE = %d\n", RDMA_DRIVER_BNXT_RE);
-		fprintf(stderr, "  RDMA_DRIVER_OCRDMA = %d\n", RDMA_DRIVER_OCRDMA);
-		fprintf(stderr, "  RDMA_DRIVER_NES = %d\n", RDMA_DRIVER_NES);
-		fprintf(stderr, "  RDMA_DRIVER_IRDMA = %d\n", RDMA_DRIVER_IRDMA);
-		fprintf(stderr, "  RDMA_DRIVER_VMW_PVRDMA = %d\n", RDMA_DRIVER_VMW_PVRDMA);
-		fprintf(stderr, "  RDMA_DRIVER_QEDR = %d\n", RDMA_DRIVER_QEDR);
-		fprintf(stderr, "  RDMA_DRIVER_HNS = %d\n", RDMA_DRIVER_HNS);
-		fprintf(stderr, "  RDMA_DRIVER_USNIC = %d\n", RDMA_DRIVER_USNIC);
-		fprintf(stderr, "  RDMA_DRIVER_RXE = %d\n", RDMA_DRIVER_RXE);
-		fprintf(stderr, "  RDMA_DRIVER_HFI1 = %d\n", RDMA_DRIVER_HFI1);
-		fprintf(stderr, "  RDMA_DRIVER_QIB = %d\n", RDMA_DRIVER_QIB);
-		fprintf(stderr, "  RDMA_DRIVER_EFA = %d\n", RDMA_DRIVER_EFA);
-		fprintf(stderr, "  RDMA_DRIVER_SIW = %d\n", RDMA_DRIVER_SIW);
-		fprintf(stderr, "  RDMA_DRIVER_ERDMA = %d\n", RDMA_DRIVER_ERDMA);
-		fprintf(stderr, "  RDMA_DRIVER_MANA = %d\n", RDMA_DRIVER_MANA);
 	}
 
 	list_for_each(&driver_list, driver, entry) {
+		{ const struct verbs_match_ent *_e = driver->ops->match_table;
+		  uint64_t _did = 0;
+		  if (_e) for (; _e->kind != VERBS_MATCH_SENTINEL; _e++)
+			if (_e->kind == VERBS_MATCH_DRIVER_ID) { _did = _e->u.driver_id; break; }
+		  fprintf(stderr, "Rita2 DEBUG: trying driver %s (driver_id=%lu) for device %s\n",
+			driver->ops->name, _did, sysfs_dev->ibdev_name); }
 		dev = try_driver(driver->ops, sysfs_dev);
 		if (dev)
 			return dev;

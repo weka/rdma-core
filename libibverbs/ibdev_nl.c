@@ -32,6 +32,7 @@
 #include <util/rdma_nl.h>
 
 #include <dirent.h>
+#include <stdio.h>
 #include <fcntl.h>
 #include <unistd.h>
 #include <sys/sysmacros.h>
@@ -201,8 +202,23 @@ int find_sysfs_devs_nl(struct list_head *tmp_sysfs_dev_list)
 		goto err;
 
 	list_for_each_safe (tmp_sysfs_dev_list, dev, dev_tmp, entry) {
-		if ((find_uverbs_nl(nl, dev) && find_uverbs_sysfs(dev)) ||
-		    try_access_device(dev)) {
+		int nl_ret = find_uverbs_nl(nl, dev);
+		fprintf(stderr, "Rita DEBUG ibdev_nl: dev %s find_uverbs_nl=%d driver_id=%d\n",
+			dev->ibdev_name, nl_ret, dev->driver_id);
+		if (nl_ret) {
+			int sysfs_ret = find_uverbs_sysfs(dev);
+			fprintf(stderr, "Rita DEBUG ibdev_nl: dev %s find_uverbs_sysfs=%d sysfs_name=%s\n",
+				dev->ibdev_name, sysfs_ret, dev->sysfs_name);
+			if (sysfs_ret) {
+				list_del(&dev->entry);
+				free(dev);
+				continue;
+			}
+		}
+		int acc_ret = try_access_device(dev);
+		fprintf(stderr, "Rita DEBUG ibdev_nl: dev %s try_access_device=%d sysfs_name=%s\n",
+			dev->ibdev_name, acc_ret, dev->sysfs_name);
+		if (acc_ret) {
 			list_del(&dev->entry);
 			free(dev);
 		}
