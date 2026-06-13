@@ -277,7 +277,7 @@ struct bnxt_re_srq_req {
 
 enum bnxt_re_srq_mask {
 	BNXT_RE_SRQ_TOGGLE_PAGE_SUPPORT = 0x1,
-	BNXT_RE_SRQ_HDBR_MMAP_KEY = 0x1,
+	BNXT_RE_SRQ_HDBR_MMAP_KEY = 0x2,
 };
 
 struct bnxt_re_srq_resp {

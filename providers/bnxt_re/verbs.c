@@ -2261,8 +2261,8 @@ void bnxt_re_cleanup_cq(struct bnxt_re_qp *qp, struct bnxt_re_cq *cq)
 	struct bnxt_re_queue *que = cq->cqq;
 	struct bnxt_re_req_cqe *scqe;
 	struct bnxt_re_rc_cqe *rcqe;
+	int indx, type, count = 0;
 	struct bnxt_re_bcqe *hdr;
-	int indx, type;
 	uint32_t flg_val;
 	bool phase;
 	void *cqe;
@@ -2274,7 +2274,7 @@ void bnxt_re_cleanup_cq(struct bnxt_re_qp *qp, struct bnxt_re_cq *cq)
 	bnxt_re_dp_spin_lock(&que->qlock);
 	phase = cq->phase;
 	indx = que->head;
-	while (indx != que->tail) {
+	while (count < que->depth) {
 		cqe = que->va + indx * bnxt_re_get_cqe_sz();
 		hdr = cqe + sizeof(struct bnxt_re_req_cqe);
 		flg_val = le32toh(hdr->flg_st_typ_ph);
@@ -2300,6 +2300,7 @@ loop_end:
 		indx = (indx + 1) % que->depth;
 		if (indx == 0)
 			phase = !phase;
+		count++;
 	}
 
 	if (qp->sq_flushed && qp->scq == cq) {

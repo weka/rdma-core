@@ -405,8 +405,8 @@ static int _bnxt_re_init_context(struct bnxt_re_dev *dev,
 	dev->max_cq_depth = resp->max_cqd;
 
 #ifdef ROCELIB_DEBUG
-	if (cntx->comp_mask & BNXT_RE_COMP_MASK_UCNTX_MSN_TABLE_ENABLED)
-		fprintf(stderr, "Broadcom MSN based transmission is enabled\n");
+	if (cntx->comp_mask & BNXT_RE_UCNTX_CMASK_MSN_TABLE_ENABLED)
+		fprintf(stderr, "Broadcom MSN-based transmission is enabled\n");
 #endif
 
 	if (bnxt_re_map_db_page(cntx, dev->pg_size, cmd_fd, resp))
