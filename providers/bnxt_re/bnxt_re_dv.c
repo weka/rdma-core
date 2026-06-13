@@ -136,8 +136,10 @@ int bnxt_re_dv_free_db_region(struct ibv_context *ctx,
 			       BNXT_RE_METHOD_DBR_FREE,
 			       1);
 
-	if (attr->dbr != MAP_FAILED)
+	if (attr->dbr != MAP_FAILED) {
 		munmap(attr->dbr, dev->pg_size);
+		attr->dbr = MAP_FAILED;
+	}
 
 	bnxt_trace_dv(NULL, DEV "%s: DV DBR: handle: 0x%x\n", __func__, attr->handle);
 	fill_attr_in_obj(cmd, BNXT_RE_DV_FREE_DBR_HANDLE, attr->handle);
@@ -194,7 +196,8 @@ bnxt_re_dv_alloc_db_region(struct ibv_context *ctx)
 			MAP_SHARED, ctx->cmd_fd, mmap_offset);
 	if (out->dbr == MAP_FAILED) {
 		fprintf(stderr, DEV "%s: mmap failed\n", __func__);
-		bnxt_re_dv_free_db_region(ctx, out);
+		if (bnxt_re_dv_free_db_region(ctx, out))
+			free(out);
 		errno = ENOMEM;
 		return NULL;
 	}
@@ -1121,6 +1124,10 @@ bnxt_re_dv_create_qp_int(struct ibv_pd *ibvpd,
 	ret = bnxt_re_dv_create_qp_cmd_int(ibvpd->context, &dv_qp_attr_int,
 					   dv_qp_attr, &resp, qp);
 	if (ret) {
+		if (qp->sq_umem)
+			bnxt_re_dv_umem_dereg(qp->sq_umem);
+		if (qp->rq_umem)
+			bnxt_re_dv_umem_dereg(qp->rq_umem);
 		bnxt_re_free_mem(qp->mem, NULL);
 		return NULL;
 	}
@@ -1320,6 +1327,7 @@ bnxt_re_dv_create_qp_cmd_ext(struct ibv_context *ibvctx,
 	struct bnxt_re_dv_umem *sq_umem = NULL;
 	struct bnxt_re_dv_umem *rq_umem = NULL;
 	struct ib_uverbs_attr *handle;
+	bool local_rq_umem = false;
 	struct bnxt_re_cq *re_cq;
 	uint64_t offset;
 	uint32_t size;
@@ -1380,9 +1388,11 @@ bnxt_re_dv_create_qp_cmd_ext(struct ibv_context *ibvctx,
 				fprintf(stderr, "%s: RQ umem_reg() failed\n", __func__);
 				return -EIO;
 			}
+			rq_umem = umem;
 			qp->rq_umem = umem;
 			fill_attr_in_obj(cmd, BNXT_RE_DV_CREATE_QP_RQ_UMEM_HANDLE,
 					 qp->rq_umem->handle);
+			local_rq_umem = true;
 		}
 
 		offset = dv_qp_attr->rq_umem_offset;
@@ -1391,7 +1401,8 @@ bnxt_re_dv_create_qp_cmd_ext(struct ibv_context *ibvctx,
 			fprintf(stderr,
 				"%s: Invalid rq_umem: handle: 0x%x offset: 0x%lx size: 0x%x\n",
 				__func__, rq_umem->handle, offset, size);
-			return -EINVAL;
+			ret = -EINVAL;
+			goto free_rq_umem;
 		}
 		bnxt_trace_dv(NULL, "%s: rq_umem: handle: 0x%x offset: 0x%lx size: 0x%x\n",
 			      __func__, rq_umem->handle, offset, size);
@@ -1436,7 +1447,7 @@ bnxt_re_dv_create_qp_cmd_ext(struct ibv_context *ibvctx,
 	ret = execute_ioctl(ibvctx, cmd);
 	if (ret) {
 		fprintf(stderr, "%s: execute_ioctl() failed: %d\n", __func__, ret);
-		return ret;
+		goto free_rq_umem;
 	}
 
 	qp->qp_handle = read_attr_obj(BNXT_RE_DV_CREATE_QP_HANDLE, handle);
@@ -1450,6 +1461,11 @@ bnxt_re_dv_create_qp_cmd_ext(struct ibv_context *ibvctx,
 		      __func__, qp->qp_handle, resp->qpid);
 
 	return 0;
+
+free_rq_umem:
+	if (local_rq_umem)
+		bnxt_re_dv_umem_dereg(qp->rq_umem);
+	return ret;
 }
 
 static struct ibv_qp *
