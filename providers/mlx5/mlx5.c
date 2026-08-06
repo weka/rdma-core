@@ -2603,12 +2603,29 @@ static struct verbs_context *mlx5_alloc_context(struct ibv_device *ibdev,
 	if (ctx_attr && ctx_attr->flags) {
 
 		if (!check_comp_mask(ctx_attr->flags,
-				     MLX5DV_CONTEXT_FLAGS_DEVX)) {
+				     MLX5DV_CONTEXT_FLAGS_DEVX |
+				     MLX5DV_CONTEXT_FLAGS_NO_DEVX)) {
 			errno = EINVAL;
 			goto err;
 		}
 
-		req.flags = MLX5_IB_ALLOC_UCTX_DEVX;
+		if ((ctx_attr->flags & MLX5DV_CONTEXT_FLAGS_DEVX) &&
+		    (ctx_attr->flags & MLX5DV_CONTEXT_FLAGS_NO_DEVX)) {
+			errno = EINVAL;
+			goto err;
+		}
+
+		/*
+		 * NO_DEVX asks for a plain ucontext and opts out of the
+		 * always_devx retry below: the caller explicitly does not
+		 * want a DEVX context (e.g. it needs to create an underlay
+		 * QP, which the kernel rejects on a DEVX context), so there
+		 * is nothing to fall back to.
+		 */
+		if (ctx_attr->flags & MLX5DV_CONTEXT_FLAGS_NO_DEVX)
+			req.flags = 0;
+		else
+			req.flags = MLX5_IB_ALLOC_UCTX_DEVX;
 	} else {
 		req.flags = MLX5_IB_ALLOC_UCTX_DEVX;
 		always_devx = true;
