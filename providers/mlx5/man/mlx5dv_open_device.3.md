@@ -45,6 +45,14 @@ struct mlx5dv_context_attr {
         *MLX5DV_CONTEXT_FLAGS_DEVX*:
         Allocate a DEVX context
 
+        *MLX5DV_CONTEXT_FLAGS_NO_DEVX*:
+        Force allocation of a plain (non DEVX) context, opting out of the
+        DEVX-by-default behavior normally applied to mlx5 ucontexts. Needed
+        by verbs flows that the kernel rejects on a DEVX context, e.g.
+        creating a UD QP with an explicit source QPN
+        (*IBV_QP_CREATE_SOURCE_QPN*). Mutually exclusive with
+        *MLX5DV_CONTEXT_FLAGS_DEVX*.
+
 *comp_mask*
 :       Bitmask specifying what fields in the structure are valid
 

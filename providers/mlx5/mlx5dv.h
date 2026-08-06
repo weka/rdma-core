@@ -1719,6 +1719,18 @@ static inline uint64_t mlx5dv_ts_to_ns(struct mlx5dv_clock_info *clock_info,
 
 enum mlx5dv_context_attr_flags {
 	MLX5DV_CONTEXT_FLAGS_DEVX = 1 << 0,
+	/*
+	 * Force allocation of a plain (non DEVX) ucontext, opting out of the
+	 * DEVX-by-default behavior applied to every mlx5 ucontext since
+	 * kernel/rdma-core commit ca93d3b73054 ("mlx5: Enable devx by
+	 * default"). Some verbs flows -- notably creating a UD QP with an
+	 * explicit source QPN (IBV_QP_CREATE_SOURCE_QPN, e.g. for an
+	 * underlay QP used by IPoIB) -- are rejected by the kernel when
+	 * issued on a DEVX ucontext, and there is otherwise no way to obtain
+	 * a non-DEVX ucontext. Mutually exclusive with
+	 * MLX5DV_CONTEXT_FLAGS_DEVX.
+	 */
+	MLX5DV_CONTEXT_FLAGS_NO_DEVX = 1 << 1,
 };
 
 enum mlx5dv_context_attr_comp_mask {

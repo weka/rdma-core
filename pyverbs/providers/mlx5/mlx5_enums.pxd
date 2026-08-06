@@ -33,6 +33,7 @@ cdef extern from 'infiniband/mlx5dv.h':
 
     cpdef enum mlx5dv_context_attr_flags:
         MLX5DV_CONTEXT_FLAGS_DEVX
+        MLX5DV_CONTEXT_FLAGS_NO_DEVX
 
     cpdef enum mlx5dv_context_attr_comp_mask:
         MLX5DV_CONTEXT_ATTR_MASK_FD_ARRAY
