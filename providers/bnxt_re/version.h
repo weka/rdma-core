@@ -37,9 +37,9 @@
 #ifndef __BNXT_RE_VERSION_H__
 #define __BNXT_RE_VERSION_H__
 
-#define MAJOR_VERSION "238"
+#define MAJOR_VERSION "239"
 #define MINOR_VERSION "1"
-#define SUB_MAJOR_VERSION "143"
+#define SUB_MAJOR_VERSION "164"
 #define SUB_MINOR_VERSION "0"
 
 #define	LIBBNXT_RE_VERSION(a, b, c, d)	a"."b"."c"."d
@@ -48,5 +48,5 @@
 						   MINOR_VERSION,\
 						   SUB_MAJOR_VERSION,\
 						   SUB_MINOR_VERSION)
-#define LIBBNXT_RE_BUILD_VERSION 238.1.143.0
+#define LIBBNXT_RE_BUILD_VERSION 239.1.164.0
 #endif	/* __BNXT_RE_VERSION_H__ */

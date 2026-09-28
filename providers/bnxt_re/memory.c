@@ -102,7 +102,7 @@ void *bnxt_re_get_obj(struct bnxt_re_mem *mem, size_t req)
 {
 	void *va;
 
-	if ((mem->size - mem->tail - req) < mem->head)
+	if (req > (mem->size - mem->head - mem->tail))
 		return NULL;
 	mem->tail += req;
 	va = (void *)((char *)mem->va_tail - mem->tail);

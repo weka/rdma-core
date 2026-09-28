@@ -37,13 +37,11 @@
 #ifndef __BNXT_RE_ABI_H__
 #define __BNXT_RE_ABI_H__
 
-/* WEKA: always use the installed-system header path. The upstream drop's
- * IBVERBS_PABI_VERSION>=17 branch references <kern-abi.h> which is the
- * in-tree relative path in the rdma-core source layout; our build
- * compiles against installed rdma-core headers where only
- * <infiniband/kern-abi.h> is exposed.
- */
+#if (IBVERBS_PABI_VERSION >= 17)
+#include <kern-abi.h>
+#else
 #include <infiniband/kern-abi.h>
+#endif
 
 #include <rdma/ib_user_ioctl_cmds.h>
 
@@ -86,6 +84,7 @@ enum {
 	BNXT_RE_UCNTX_CMASK_INLINE_OPTIMIZER_SUPPORTED = 0x40000,
 	BNXT_RE_UCNTX_CMASK_COMPLETION_TS_SUPPORTED = 0x80000,
 	BNXT_RE_UCNTX_CMASK_UC_DB_OFFSET = 0x100000,
+	BNXT_RE_UCNTX_CMASK_CQ_CACHELINE_ALIGN = 0x200000,
 	BNXT_RE_UCNTX_CMASK_OOB_DRIVER = 0x8000000000000000ULL,
 };
 
@@ -95,6 +94,7 @@ enum bnxt_re_req_to_drv {
 	BNXT_RE_COMP_MASK_REQ_UCNTX_VAR_WQE_SUPPORT = 0x02,
 	BNXT_RE_COMP_MASK_REQ_UCNTX_RSVD_WQE = 0x04,
 	BNXT_RE_COMP_MASK_REQ_UCNTX_SMALL_RECV_WQE_LIB_SUP = 0x08,
+	BNXT_RE_COMP_MASK_REQ_UCNTX_CQ_CACHELINE_SUPPORT = 0x10,
 	BNXT_RE_UCNTX_CMASK_OOB_LIB = 0x8000000000000000ULL,
 };
 
@@ -131,6 +131,7 @@ struct bnxt_re_uctx_resp {
 	__u8 db_push_mode;
 	__u8 deferred_db_enabled;
 	__u16 rsvd1;
+	__u32 cache_line_size;
 };
 
 enum {
@@ -368,7 +369,7 @@ enum bnxt_re_dv_create_obj_attrs {
 	BNXT_RE_DV_CREATE_OBJ_RX_HANDLE,
 	BNXT_RE_CREATE_OBJ_RESP,
 	BNXT_RE_DV_DESTROY_OBJ_HANDLE,
-	BNXT_RE_CREATE_OBJ_ATTR_PTR,
+	BNXT_RE_DV_CREATE_OBJ_REQ_PTR,
 };
 
 enum bnxt_re_notify_drv_methods {
@@ -490,6 +491,10 @@ enum bnxt_re_dv_cq_methods {
 	BNXT_RE_METHOD_DV_DESTROY_CQ,
 };
 
+enum {
+	BNXT_RE_DV_CREATE_QP_COMP_MASK_WQE_MODE	= 0x1,
+};
+
 struct bnxt_re_dv_create_qp_req {
 	int qp_type;
 	__u32 max_send_wr;
@@ -511,6 +516,9 @@ struct bnxt_re_dv_create_qp_req {
 	__u32 rq_len;
 	__u32 rq_slots; /* == max_recv_wr */
 	__u32 rq_wqe_sz;
+	__aligned_u64 comp_mask;
+	__u32 wqe_mode;
+	__u32 reserved;
 };
 
 struct bnxt_re_dv_create_qp_resp {
@@ -526,7 +534,8 @@ enum bnxt_re_dv_create_qp_attrs {
 	BNXT_RE_DV_CREATE_QP_RQ_UMEM_HANDLE,
 	BNXT_RE_DV_CREATE_QP_SRQ_HANDLE,
 	BNXT_RE_DV_CREATE_QP_DBR_HANDLE,
-	BNXT_RE_DV_CREATE_QP_RESP
+	BNXT_RE_DV_CREATE_QP_RESP,
+	BNXT_RE_DV_CREATE_QP_PD_HANDLE
 };
 
 enum bnxt_re_dv_qp_methods {
@@ -554,5 +563,49 @@ enum bnxt_re_dv_send_pt_msg_attrs {
 	BNXT_RE_SEND_PT_MSG_IN,
 };
 
+struct bnxt_re_obj_stats_ctx_attr {
+	__u32 update_period_ms;
+	__u32 stats_size;		/* Size of stats buffer */
+	__u16 stats_dma_length;
+	__u16 reserved;			/* padding to 8-byte boundary */
+};
+
+struct bnxt_re_obj_ring_attr {
+	__u32 depth;			/* Number of descriptors */
+	__u16 logical_id;		/* Logical ring ID */
+	__u16 rx_buf_size;		/* Applicable for Rx ring only. Buf size */
+	__u16 dpi;			/* Default DB region handle */
+	__u8  mpc_chnl_type;		/* MPC channel type (TCE, RCE, TE_CFA, RE_CFA) */
+	__u8  traffic_class;		/* Traffic class to be used for Tx */
+	__u32 reserved;			/* padding to 8-byte boundary */
+};
+
+struct bnxt_re_obj_vnic_attr {
+	__u32 flags;
+	__u16 virtio_net_fid;
+	__u16 vnic_id;
+};
+
+struct bnxt_re_obj_bfid_attr {
+	__u32 flags;
+	__u16 bfid;
+	__u16 reserved;			/* padding to 8-byte boundary */
+};
+
+union bnxt_re_obj_attr {
+	struct bnxt_re_obj_stats_ctx_attr stats_attr;
+	struct bnxt_re_obj_ring_attr ring_attr;
+	struct bnxt_re_obj_vnic_attr vnic_attr;
+	struct bnxt_re_obj_bfid_attr bfid_attr;
+};
+
+struct bnxt_re_create_obj_req {
+	__u8  obj_type;      /* BNXT_RE_OBJ_TYPE_TX, RX, RX_AGGR, RSS, STATS, VNIC */
+	__u8  pg_size;       /* Page size */
+	__u16 reserved;      /* padding to 8-byte boundary */
+	__u32 size;
+	__u64 offset;        /* Offset into umem */
+	union bnxt_re_obj_attr attr;
+};
 
 #endif

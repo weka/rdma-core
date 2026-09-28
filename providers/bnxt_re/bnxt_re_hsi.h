@@ -44,21 +44,6 @@ extern "C" {
 #define true                        1
 #define false                        0
 
-#define BNXT_RE_SLOT_SIZE_BB            16
-#define BNXT_RE_STATIC_WQE_SIZE_SLOTS   4
-#define BNXT_RE_STATIC_WQE_BB           (BNXT_RE_STATIC_WQE_SIZE_SLOTS * BNXT_RE_SLOT_SIZE_BB)
-#define BNXT_RE_STATIC_WQE_SHIFT        6
-
-#define BNXT_RE_STATIC_RQE_SIZE_SLOTS   4
-#define BNXT_RE_STATIC_RQE_BB           (BNXT_RE_STATIC_RQE_SIZE_SLOTS * BNXT_RE_SLOT_SIZE_BB)
-#define BNXT_RE_STATIC_RQE_SHIFT        6
-
-#define BNXT_RE_STATIC_CQE_SIZE_SLOTS   4
-#define BNXT_RE_STATIC_CQE_BB           (BNXT_RE_STATIC_CQE_SIZE_SLOTS * BNXT_RE_SLOT_SIZE_BB)
-#define BNXT_RE_STATIC_CQE_SHIFT        6
-
-#define BNXT_RE_QUEUE_START_PHASE       0x01
-
 enum bnxt_re_wr_opcode {
 	BNXT_RE_WR_OPCD_SEND		= 0x00,
 	BNXT_RE_WR_OPCD_SEND_IMM	= 0x01,
@@ -321,6 +306,32 @@ enum bnxt_re_ppp_st_shift {
 
 struct bnxt_re_db_hdr {
 	__u64 typ_qid_indx; /* typ: 4, qid:20 (qid:12 on V3), indx:24 */
+};
+
+#define REL_DB_XID_MASK         0xFFFFF
+
+#define REL_DB_PATH_MASK        0x3
+#define REL_DB_PATH_SFT         22
+#define REL_DB_PATH_ROCE        0
+#define REL_DB_PATH_L2          1
+
+#define REL_DB_INCR_MASK        0x1F
+#define REL_DB_INCR_SFT         24
+
+#define REL_DB_TYPE_MASK        0x7
+#define REL_DB_TYPE_SFT         29
+#define REL_DB_TYPE_SQ          0
+#define REL_DB_TYPE_SRQ         1
+#define REL_DB_TYPE_CQ          2
+#define REL_DB_TYPE_CQ_ARMALL   3
+#define REL_DB_TYPE_NQ          4
+#define REL_DB_TYPE_NQ_ARM      5
+#define REL_DB_TYPE_NQ_MASK     6
+
+#define REL_DB_OFFSET           0x8
+
+struct bnxt_re_32db_hdr {
+	__u32 typ_incr_path_xid;
 };
 
 /* express doorbell offset */

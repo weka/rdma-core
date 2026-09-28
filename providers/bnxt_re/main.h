@@ -37,7 +37,9 @@
 #ifndef __BNXT_RE_MAIN_H__
 #define __BNXT_RE_MAIN_H__
 
-#include "bnxt_re_config.h"
+#if HAVE_CONFIG_H
+#include <config.h>
+#endif
 
 #include <inttypes.h>
 #include <stddef.h>
@@ -46,18 +48,20 @@
 #include <endian.h>
 #include <pthread.h>
 #include <sys/param.h>
+#include <math.h>
 #include <stdio.h>
 #include <stdarg.h>
 
-/* We always build in-tree against rdma-core. Use ccan/ilog.h's
- * ilog32_nz() helper instead of <math.h> log2() so we don't have to
- * link against libm.
- */
+#ifdef HAVE_RDMA_CORE_PKG
+#include "driver.h"
+#include "util/udma_barrier.h"
+#include "util/mmio.h"
+#else
 #include <infiniband/driver.h>
-#include <util/udma_barrier.h>
-#include <util/mmio.h>
-#include <ccan/minmax.h>
-#include <ccan/ilog.h>
+#include <infiniband/arch.h>
+#define mmio_write64(dst, val)	(*((volatile __u64 *) (dst)) = val)
+#endif /*HAVE_RDMA_CORE_PKG*/
+#include "ccan/minmax.h"
 
 #include "version.h"
 #include "compat.h"
@@ -225,6 +229,7 @@ struct bnxt_re_cq {
 	struct bnxt_re_list_head prev_cq_head;
 	struct bnxt_re_context *cntx;
 	struct bnxt_re_queue *cqq;
+	struct bnxt_spinlock flush_lock;
 	struct bnxt_re_dpi *udpi;
 	struct bnxt_re_mem *resize_mem;
 	struct bnxt_re_mem *mem;
@@ -244,9 +249,9 @@ struct bnxt_re_cq {
 	uint8_t resize_tog;
 	bool deffered_db_sup;
 	uint32_t hw_cqes;
+	uint32_t db_thresh;
 	struct bnxt_re_dv_umem *cq_umem;
 	int dv_cq_flags;
-	bool umem_reg;
 	bool ts_cq;
 	struct bnxt_re_wc current_wc;
 	struct ibv_wc c_wc;
@@ -431,6 +436,7 @@ struct bnxt_re_dev {
 	struct ibv_device_attr devattr;
 	uint32_t pg_size;
 	uint32_t cqe_size;
+	uint32_t cq_stride_mult;
 	uint32_t max_cq_depth;
 	uint32_t db_grc_reg_offset;
 	uint32_t db_fifo_max_depth;
@@ -571,7 +577,7 @@ static inline void bnxt_err(struct bnxt_re_context *cntx, const char *fmt, ...)
 	timeinfo = localtime(&rawtime);
 
 	strftime(timestamp, LEN_50, "%b %d %X", timeinfo);
-	sprintf(prefix, " %s-%s: ", "rocelib", LIBBNXT_RE_REL_VERSION);
+	snprintf(prefix, sizeof(prefix), " %s-%s: ", "rocelib", LIBBNXT_RE_REL_VERSION);
 
 	if (!fp)
 		return;
@@ -713,6 +719,17 @@ static inline uint32_t bnxt_re_init_depth(uint32_t ent, uint64_t cmask)
 {
 	return cmask & BNXT_RE_UCNTX_CMASK_POW2_DISABLED ?
 		ent : roundup_pow_of_two(ent);
+}
+
+static inline bool bnxt_re_cq_apply_cacheline_ncqe(struct bnxt_re_dev *dev,
+						   int *ncqe)
+{
+	uint32_t physical_ncqe = ((uint32_t)(*ncqe + 1) * dev->cq_stride_mult) - 1U;
+
+	if (physical_ncqe > dev->max_cq_depth)
+		return false;
+	*ncqe = (int)physical_ncqe;
+	return true;
 }
 
 static inline uint32_t bnxt_re_get_diff(uint64_t cmask)
@@ -877,6 +894,20 @@ static inline void bnxt_re_sub_sec_busy_wait(uint32_t nsec)
 #define bnxt_re_dp_spin_lock(lock)     bnxt_spin_lock(lock)
 #define bnxt_re_dp_spin_unlock(lock)   bnxt_spin_unlock(lock)
 #if defined(BNXT_RE_ENABLE_DEV_DEBUG)
+
+#define BNXT_DBG_CYCLE_CNT_MAX_STEPS	8
+#define BNXT_DBG_CYCLE_CNT_DEFAULT_MOD	10000
+
+struct bnxt_dbg_cycle_cnt {
+	uint64_t cycles[BNXT_DBG_CYCLE_CNT_MAX_STEPS];
+	uint64_t cycles_elapsed[BNXT_DBG_CYCLE_CNT_MAX_STEPS - 1];
+	uint32_t iter;
+	uint32_t mod;
+	uint32_t num_steps;
+	char     label[32];
+};
+
+extern struct bnxt_dbg_cycle_cnt exp_send_cycle_cnt;
 void bnxt_rocelib_test_init(void);
 unsigned int bnxt_re_put_tx_sge_test(struct bnxt_re_queue *que, uint32_t *idx,
 				     struct ibv_sge *sgl, int nsg);
@@ -886,6 +917,11 @@ void bnxt_re_put_rx_sge_test(struct bnxt_re_qp *qp, struct bnxt_re_exp_db *db,
 uint32_t bnxt_re_rq_hdr_val_test(struct bnxt_re_queue *rq, uint32_t opcd);
 uint32_t bnxt_re_sq_hdr_val_test(struct bnxt_re_queue *sq, uint8_t opcd);
 void bnxt_dbg_dump_wr(struct ibv_send_wr *wr, struct bnxt_re_qp *qp, void *hdr, void *sqe);
+void bnxt_dbg_cycle_cnt_init(struct bnxt_dbg_cycle_cnt *prof,
+			     uint32_t num_steps, uint32_t mod,
+			     const char *label);
+void bnxt_dbg_cycle_cnt_step(struct bnxt_dbg_cycle_cnt *prof, int step);
+void bnxt_dbg_cycle_cnt_end(struct bnxt_dbg_cycle_cnt *prof);
 void dump_dbg_msn_tbl(struct bnxt_re_qp *qp, struct bnxt_re_msns *msns,
 		      uint32_t len, uint32_t st_idx);
 #endif

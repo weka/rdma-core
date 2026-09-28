@@ -34,7 +34,9 @@
  * Description: Main component of the bnxt_re driver
  */
 
-#include "bnxt_re_config.h"
+#if HAVE_CONFIG_H
+#include <config.h>
+#endif                          /* HAVE_CONFIG_H */
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -369,6 +371,7 @@ static int _bnxt_re_init_context(struct bnxt_re_dev *dev,
 				 struct bnxt_re_uctx_resp *resp, int cmd_fd)
 {
 	struct bnxt_re_pacing_data *pacing_data;
+	uint32_t slots_per_cacheline;
 
 	bnxt_single_threaded = 0;
 	cntx->cctx = malloc(sizeof(struct bnxt_re_chip_ctx));
@@ -402,6 +405,13 @@ static int _bnxt_re_init_context(struct bnxt_re_dev *dev,
 	cntx->db_push_mode = resp->db_push_mode;
 	dev->pg_size = resp->pg_size;
 	dev->cqe_size = resp->cqe_sz;
+	dev->cq_stride_mult = 1U;
+	if ((cntx->comp_mask & BNXT_RE_UCNTX_CMASK_CQ_CACHELINE_ALIGN) &&
+	    dev->cqe_size > 0) {
+		slots_per_cacheline = (resp->cache_line_size + dev->cqe_size - 1U) /
+				      dev->cqe_size;
+		dev->cq_stride_mult = max_t(uint32_t, 1U, slots_per_cacheline);
+	}
 	dev->max_cq_depth = resp->max_cqd;
 
 #ifdef ROCELIB_DEBUG
@@ -410,23 +420,25 @@ static int _bnxt_re_init_context(struct bnxt_re_dev *dev,
 #endif
 
 	if (bnxt_re_map_db_page(cntx, dev->pg_size, cmd_fd, resp))
-		goto free;
+		goto free_cctx;
 
 	if (bnxt_re_is_wcdpi_enabled(cntx)) {
-		bnxt_re_alloc_map_push_page(&cntx->ibvctx.context);
-		if (cntx->cctx->chip_is_gen_p5_p7 && cntx->udpi.wcdpi)
-			bnxt_re_init_pbuf_list(cntx);
+		if (bnxt_re_alloc_map_push_page(&cntx->ibvctx.context))
+			goto unmap_wcdbpg;
+		if (cntx->cctx->chip_is_gen_p5_p7 && cntx->udpi.wcdpi &&
+		    bnxt_re_init_pbuf_list(cntx))
+			goto free_pbuf;
 	}
 
 	if (cntx->comp_mask & BNXT_RE_UCNTX_CMASK_DBR_PACING_ENABLED) {
 
 		if (bnxt_re_alloc_map_dbr_pacing_page(&cntx->ibvctx.context))
-			goto free;
+			goto free_pbuf;
 
 		if (bnxt_re_alloc_map_dbr_bar_page(&cntx->ibvctx.context)) {
 			munmap(cntx->dbr_pacing_page, dev->pg_size);
 			cntx->dbr_pacing_page = NULL;
-			goto free;
+			goto free_pbuf;
 		}
 
 		/* TBD - Upstream don't have below code */
@@ -486,7 +498,25 @@ static int _bnxt_re_init_context(struct bnxt_re_dev *dev,
 
 	return 0;
 
-free:
+free_pbuf:
+	if (cntx->pbrec) {
+		free(cntx->pbrec);
+		cntx->pbrec = NULL;
+	}
+unmap_wcdbpg:
+	if (cntx->udpi.wcdbpg && cntx->udpi.wcdbpg != MAP_FAILED) {
+		munmap(cntx->udpi.wcdbpg, dev->pg_size);
+		cntx->udpi.wcdbpg = NULL;
+	}
+	if (cntx->udpi.dbpage && cntx->udpi.dbpage != MAP_FAILED) {
+#ifdef BNXT_RE_HAVE_DB_LOCK
+		pthread_spin_destroy(&cntx->udpi.db_lock);
+#endif
+		cntx->udpi.dbpage = (void *)cntx->udpi.dbpage - cntx->udpi.dbpage_offset;
+		munmap(cntx->udpi.dbpage, dev->pg_size);
+		cntx->udpi.dbpage = NULL;
+	}
+free_cctx:
 	free(cntx->cctx);
 failed:
 	fprintf(stderr, DEV "Failed to initialize context for device\n");
@@ -556,6 +586,7 @@ static struct verbs_context *bnxt_re_alloc_context(struct ibv_device *vdev,
 	req.comp_mask |= BNXT_RE_COMP_MASK_REQ_UCNTX_POW2_SUPPORT;
 	req.comp_mask |= BNXT_RE_COMP_MASK_REQ_UCNTX_RSVD_WQE;
 	req.comp_mask |= BNXT_RE_COMP_MASK_REQ_UCNTX_SMALL_RECV_WQE_LIB_SUP;
+	req.comp_mask |= BNXT_RE_COMP_MASK_REQ_UCNTX_CQ_CACHELINE_SUPPORT;
 	req.comp_mask |= BNXT_RE_UCNTX_CMASK_OOB_LIB;
 	if (ibv_cmd_get_context(&cntx->ibvctx, &req.cmd, sizeof(req),
 #ifdef HAVE_IBV_FD_ARRAY
@@ -576,13 +607,16 @@ static struct verbs_context *bnxt_re_alloc_context(struct ibv_device *vdev,
 	ret = bnxt_re_query_device_compat(&cntx->ibvctx.context,
 					  &rdev->devattr);
 	if (ret)
-		goto failed;
+		goto failed_uninit;
 
 	/* If max_rq_wqes is not populated, get it from devattr */
 	if (!cntx->max_rq_wqes)
 		cntx->max_rq_wqes = rdev->devattr.max_qp_wr;
 
 	return &cntx->ibvctx;
+failed_uninit:
+	bnxt_close_debug_file(cntx->dbg_fp);
+	_bnxt_re_uninit_context(rdev, cntx);
 failed:
 	fprintf(stderr, DEV "Failed to allocate context for device\n");
 	verbs_uninit_context(&cntx->ibvctx);
@@ -623,6 +657,7 @@ int bnxt_re_init_context(struct verbs_device *vdev, struct ibv_context *ibvctx,
 	req.comp_mask |= BNXT_RE_COMP_MASK_REQ_UCNTX_POW2_SUPPORT;
 	req.comp_mask |= BNXT_RE_COMP_MASK_REQ_UCNTX_VAR_WQE_SUPPORT;
 	req.comp_mask |= BNXT_RE_COMP_MASK_REQ_UCNTX_RSVD_WQE;
+	req.comp_mask |= BNXT_RE_COMP_MASK_REQ_UCNTX_CQ_CACHELINE_SUPPORT;
 	if (ibv_cmd_get_context(ibvctx, &req.cmd, sizeof(req),
 #ifdef HAVE_IBV_FD_ARRAY
 				fd_arr, &resp.resp, sizeof(resp))) {
@@ -762,3 +797,19 @@ static const struct verbs_device_ops bnxt_re_dev_ops = {
 
 COMPAT_PROVIDER_DRIVER(bnxt_re, bnxt_re_dev_ops);
 #endif /* RCP_HAS_PROVIDER_DRIVER */
+
+static bool is_bnxt_dev(struct ibv_device *vdev)
+{
+#if defined(HAVE_RDMA_CORE_PKG) || defined(RCP_HAS_PROVIDER_DRIVER)
+	struct verbs_device *verbs_device = verbs_get_device(vdev);
+
+	return verbs_device->ops == &bnxt_re_dev_ops;
+#endif
+
+	return false;
+}
+
+bool bnxt_re_dv_is_supported(struct ibv_device *vdev)
+{
+	return vdev && is_bnxt_dev(vdev);
+}

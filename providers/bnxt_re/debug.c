@@ -34,7 +34,9 @@
  * Description: rocelib test suite of the bnxt_re driver
  */
 
-#include "bnxt_re_config.h"
+#if HAVE_CONFIG_H
+#include <config.h>
+#endif
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -49,6 +51,28 @@
 #include <stdlib.h>
 #include <stdint.h>
 #include <stddef.h>
+
+#if defined(__x86_64__)
+#include <x86intrin.h>
+static inline uint64_t bnxt_dbg_read_cycles(void)
+{
+	unsigned int dummy;
+
+	asm volatile("lfence" ::: "memory");
+	return __rdtscp(&dummy);
+}
+#elif defined(__aarch64__)
+static inline uint64_t bnxt_dbg_read_cycles(void)
+{
+	uint64_t val;
+
+	asm volatile("isb" ::: "memory");
+	asm volatile("mrs %0, cntvct_el0" : "=r" (val));
+	return val;
+}
+#else
+static inline uint64_t bnxt_dbg_read_cycles(void) { return 0; }
+#endif
 
 #include "main.h"
 #include "bnxt_re_hsi.h"
@@ -68,9 +92,12 @@ enum {
 	/* Add err inject enum above */
 	BNXT_DBG_DUMP_WR		= 1 << 8,
 	BNXT_DBG_DUMP_MSN		= 1 << 9,
+	BNXT_DBG_DUMP_CYCLES		= 1 << 10,
 };
 
 uint32_t bnxt_dev_debug_mask;
+static uint32_t bnxt_dbg_cycle_cnt_mod = BNXT_DBG_CYCLE_CNT_DEFAULT_MOD;
+struct bnxt_dbg_cycle_cnt exp_send_cycle_cnt;
 
 __u32 err_sq_idx_get(void)
 {
@@ -107,6 +134,21 @@ void bnxt_rocelib_test_init(void)
 	env = getenv("BNXT_DEBUG_MASK_INTERNAL");
 	if (env)
 		bnxt_dev_debug_mask = strtol(env, NULL, 0);
+
+	if (bnxt_dev_debug_mask & BNXT_DBG_DUMP_CYCLES) {
+		env = getenv("BNXT_DBG_CYCLE_CNT_MOD");
+		if (env) {
+			bnxt_dbg_cycle_cnt_mod =
+				strtoul(env, NULL, 0);
+			if (bnxt_dbg_cycle_cnt_mod == 0)
+				bnxt_dbg_cycle_cnt_mod =
+					BNXT_DBG_CYCLE_CNT_DEFAULT_MOD;
+		}
+		fprintf(stderr, DEV "Cycle count moderation set to %u\n",
+			bnxt_dbg_cycle_cnt_mod);
+		bnxt_dbg_cycle_cnt_init(&exp_send_cycle_cnt, 5, 0,
+					"exp_post_send");
+	}
 
 	bnxt_err_sq_idx = err_sq_idx_get();
 	if (bnxt_err_sq_idx)
@@ -243,6 +285,71 @@ void bnxt_dbg_dump_wr(struct ibv_send_wr *wr, struct bnxt_re_qp *qp, void *hdr, 
 	default:
 		fprintf(stderr, "NON wire wr\n");
 		break;
+	}
+}
+
+static void bnxt_dbg_cycle_cnt_print(struct bnxt_dbg_cycle_cnt *prof)
+{
+	uint32_t i, num_segs;
+
+	num_segs = prof->num_steps - 1;
+	fprintf(stderr, DEV "%s avg cycles/iter:", prof->label);
+	for (i = 0; i < num_segs; i++)
+		fprintf(stderr, " seg%d=%lu", i + 1,
+			prof->cycles_elapsed[i] / prof->iter);
+	fprintf(stderr, " (over %u iterations)\n", prof->iter);
+}
+
+/*
+ * Moderation priority:
+ *   1. per-context mod (if caller passes nonzero)
+ *   2. BNXT_DBG_CYCLE_CNT_MOD env var (parsed at init)
+ *   3. BNXT_DBG_CYCLE_CNT_DEFAULT_MOD (compile-time default, 10000)
+ */
+void bnxt_dbg_cycle_cnt_init(struct bnxt_dbg_cycle_cnt *prof,
+			     uint32_t num_steps, uint32_t mod,
+			     const char *label)
+{
+	if (num_steps < 2)
+		num_steps = 2;
+	if (num_steps > BNXT_DBG_CYCLE_CNT_MAX_STEPS)
+		num_steps = BNXT_DBG_CYCLE_CNT_MAX_STEPS;
+	if (mod == 0)
+		mod = bnxt_dbg_cycle_cnt_mod;
+
+	memset(prof, 0, sizeof(*prof));
+	prof->num_steps = num_steps;
+	prof->mod = mod;
+	snprintf(prof->label, sizeof(prof->label), "%s", label);
+}
+
+void bnxt_dbg_cycle_cnt_step(struct bnxt_dbg_cycle_cnt *prof, int step)
+{
+	if (!(bnxt_dev_debug_mask & BNXT_DBG_DUMP_CYCLES))
+		return;
+
+	if (step < 0 || (uint32_t)step >= prof->num_steps)
+		return;
+
+	prof->cycles[step] = bnxt_dbg_read_cycles();
+}
+
+void bnxt_dbg_cycle_cnt_end(struct bnxt_dbg_cycle_cnt *prof)
+{
+	uint32_t i, num_segs;
+
+	if (!(bnxt_dev_debug_mask & BNXT_DBG_DUMP_CYCLES))
+		return;
+
+	num_segs = prof->num_steps - 1;
+	for (i = 0; i < num_segs; i++)
+		prof->cycles_elapsed[i] += prof->cycles[i + 1] - prof->cycles[i];
+
+	prof->iter++;
+	if (prof->iter >= prof->mod) {
+		bnxt_dbg_cycle_cnt_print(prof);
+		prof->iter = 0;
+		memset(prof->cycles_elapsed, 0, sizeof(prof->cycles_elapsed));
 	}
 }
 

@@ -62,6 +62,7 @@ struct bnxt_re_qattr {
 	uint32_t sz_ring;
 	uint32_t sz_shad;
 	uint32_t sw_nwr;
+	uint8_t wqe_mode; /* Override ctx wqe_mode */
 	bool exp_mode;
 };
 

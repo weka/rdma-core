@@ -154,6 +154,21 @@ struct bnxt_re_dv_cq_attr {
 	uint32_t cqe_size; /* size of entries */
 };
 
+/* DV WQE mode values for wqe_mode field in bnxt_re_dv_qp_init_attr
+ * and bnxt_re_dv_qp_mem_info.  Set BNXT_RE_DV_QP_COMP_MASK_WQE_MODE in
+ * comp_mask to activate; otherwise the device default WQE mode is used.
+ */
+enum bnxt_re_dv_wqe_mode {
+	BNXT_RE_DV_WQE_MODE_DEFAULT  = 0x00, /* use device default */
+	BNXT_RE_DV_WQE_MODE_VARIABLE = 0x01,
+	BNXT_RE_DV_WQE_MODE_STATIC   = 0x02,
+};
+
+/* Compatibility mask flags for bnxt_re_dv_qp_init_attr */
+enum {
+	BNXT_RE_DV_QP_COMP_MASK_WQE_MODE = 0x1,
+};
+
 struct bnxt_re_dv_qp_init_attr {
 	/* Standard ibv params */
 	enum ibv_qp_type qp_type;
@@ -182,6 +197,7 @@ struct bnxt_re_dv_qp_init_attr {
 	uint32_t rq_slots;	/* rq length in slots */
 	uint32_t rq_wqe_sz;     /* rq wqe size */
 	uint64_t comp_mask;	/* compatibility mask for future updates */
+	enum bnxt_re_dv_wqe_mode wqe_mode;
 };
 
 struct bnxt_re_dv_qp_mem_info {
@@ -197,32 +213,7 @@ struct bnxt_re_dv_qp_mem_info {
 	uint32_t rq_slots;      /* rq length in slots */
 	uint32_t rq_wqe_sz;     /* rq wqe size */
 	uint64_t comp_mask;     /* compatibility bit mask */
-};
-
-struct bnxt_re_dv_stats_ctx_attr {
-	uint32_t update_period_ms;
-	uint16_t stats_dma_length;
-	uint32_t stats_size;       /* Size of stats buffer */
-};
-
-struct bnxt_re_dv_ring_attr {
-	uint16_t logical_id;    /* Logical ring ID */
-	uint32_t depth;		/* Number of descriptors */
-	uint16_t rx_buf_size;   /* Applicable for Rx ring only. Buf size */
-	uint16_t dpi;		/* Default DB region handle */
-	uint8_t  mpc_chnl_type;	/* MPC channel type (TCE, RCE, TE_CFA, RE_CFA) */
-	uint8_t traffic_class;  /* Traffic class to be used for Tx */
-};
-
-struct bnxt_re_dv_vnic_attr {
-	uint32_t flags;
-	uint16_t virtio_net_fid;
-	uint16_t vnic_id;
-};
-
-struct bnxt_re_dv_bfid_attr {
-	uint32_t flags;
-	uint16_t bfid;
+	enum bnxt_re_dv_wqe_mode wqe_mode;
 };
 
 enum bnxt_re_dv_obj_type {
@@ -274,7 +265,43 @@ struct bnxt_re_dv_create_obj_resp {
 	};
 };
 
-struct bnxt_re_dv_create_obj_init_attr {
+struct bnxt_re_dv_stats_ctx_attr {
+	uint32_t update_period_ms;
+	uint32_t stats_size;       /* Size of stats buffer */
+	uint16_t stats_dma_length;
+	uint16_t reserved;         /* padding to 8-byte boundary */
+};
+
+struct bnxt_re_dv_ring_attr {
+	uint32_t depth;         /* Number of descriptors */
+	uint16_t logical_id;    /* Logical ring ID */
+	uint16_t rx_buf_size;   /* Applicable for Rx ring only. Buf size */
+	uint16_t dpi;           /* Default DB region handle */
+	uint8_t  mpc_chnl_type; /* MPC channel type (TCE, RCE, TE_CFA, RE_CFA) */
+	uint8_t  traffic_class; /* Traffic class to be used for Tx */
+	uint32_t reserved;      /* padding to 8-byte boundary */
+};
+
+struct bnxt_re_dv_vnic_attr {
+	uint32_t flags;
+	uint16_t virtio_net_fid;
+	uint16_t vnic_id;
+};
+
+struct bnxt_re_dv_bfid_attr {
+	uint32_t flags;
+	uint16_t bfid;
+	uint16_t reserved;      /* padding to 8-byte boundary */
+};
+
+union bnxt_re_dv_obj_attr {
+	struct bnxt_re_dv_stats_ctx_attr stats_attr;
+	struct bnxt_re_dv_ring_attr ring_attr;
+	struct bnxt_re_dv_vnic_attr vnic_attr;
+	struct bnxt_re_dv_bfid_attr bfid_attr;
+};
+
+struct bnxt_re_dv_create_obj_req {
 	uint8_t obj_type;       /* BNXT_RE_OBJ_TYPE_TX, RX, RX_AGGR, RSS, STATS, VNIC */
 	uint8_t pg_size;        /* Page size */
 	void *umem;             /* return value from bnxt_re_dv_umem_reg */
@@ -284,13 +311,7 @@ struct bnxt_re_dv_create_obj_init_attr {
 	struct ibv_cq *send_cq;
 	uint16_t stats_handle;
 	uint16_t rx_handle;     /* For RX_AGGR: handle to parent RX ring object */
-	union {
-		struct bnxt_re_dv_stats_ctx_attr stats_attr;
-		struct bnxt_re_dv_ring_attr ring_attr;
-		struct bnxt_re_dv_vnic_attr vnic_attr;
-		struct bnxt_re_dv_bfid_attr  bfid_attr;
-	};
-	uint64_t comp_mask; /* For future expansion */
+	union bnxt_re_dv_obj_attr attr;
 };
 
 enum bnxt_re_dv_pt_msg_type {
@@ -332,7 +353,7 @@ void *bnxt_re_dv_cq_mem_alloc(struct ibv_context *ibvctx, int num_cqe,
 int bnxt_re_dv_send_fw_msg(struct ibv_context *ctx, void *in, int in_size,
 			   void *out, int out_size);
 int bnxt_re_dv_create_obj(struct ibv_context *ibvctx,
-			  struct bnxt_re_dv_create_obj_init_attr *attr,
+			  struct bnxt_re_dv_create_obj_req *req,
 			  struct bnxt_re_dv_create_obj_resp *resp);
 int bnxt_re_dv_destroy_obj(struct ibv_context *ibvctx, uint32_t handle);
 #ifdef __cplusplus

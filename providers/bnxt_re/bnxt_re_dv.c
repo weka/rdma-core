@@ -37,6 +37,7 @@
 
 #include <stdio.h>
 #include <sys/mman.h>
+#include <errno.h>
 
 #include "main.h"
 #include "abi.h"
@@ -404,6 +405,12 @@ static int bnxt_re_dv_create_cq_cmd(struct bnxt_re_dev *dev,
 	uint32_t size;
 	int ret;
 
+	if (cq_attr->ncqe > dev->max_cq_depth) {
+		fprintf(stderr, "%s: ncqe %u exceeds max_cq_depth %u\n",
+			__func__, cq_attr->ncqe, dev->max_cq_depth);
+		return -EINVAL;
+	}
+
 	/* Input args */
 	req.ncqe = cq_attr->ncqe;
 	req.va = (uint64_t)cq->cqq->va;
@@ -491,6 +498,7 @@ static int bnxt_re_dv_init_cq(struct ibv_context *ibvctx, struct bnxt_re_cq *cq,
 
 done:
 	bnxt_re_dp_spin_init(&cq->cqq->qlock, PTHREAD_PROCESS_PRIVATE, !bnxt_single_threaded);
+	bnxt_re_dp_spin_init(&cq->flush_lock, PTHREAD_PROCESS_PRIVATE, !bnxt_single_threaded);
 	INIT_DBLY_LIST_HEAD(&cq->sfhead);
 	INIT_DBLY_LIST_HEAD(&cq->rfhead);
 	INIT_DBLY_LIST_HEAD(&cq->prev_cq_head);
@@ -609,6 +617,8 @@ bnxt_re_dv_create_l2_cq(struct ibv_context *ibvctx,
 	/* Initialize spinlock and lists */
 	bnxt_re_dp_spin_init(&cq->cqq->qlock, PTHREAD_PROCESS_PRIVATE,
 			     !bnxt_single_threaded);
+	bnxt_re_dp_spin_init(&cq->flush_lock, PTHREAD_PROCESS_PRIVATE,
+			     !bnxt_single_threaded);
 	INIT_DBLY_LIST_HEAD(&cq->sfhead);
 	INIT_DBLY_LIST_HEAD(&cq->rfhead);
 	INIT_DBLY_LIST_HEAD(&cq->prev_cq_head);
@@ -642,10 +652,6 @@ struct ibv_cq *bnxt_re_dv_create_cq(struct ibv_context *ibvctx,
 	if (comp_mask & BNXT_RE_DV_CQ_FLAG_L2)
 		return bnxt_re_dv_create_l2_cq(ibvctx, cq_attr);
 
-	/* Existing Direct Verbs path for RoCE CQs */
-	cq_umem = (struct bnxt_re_dv_umem *)cq_attr->umem_handle;
-
-	/* Existing Direct Verbs path for RoCE CQs */
 	if (!bnxt_re_dv_cq_alloc_helper) {
 		if (cq_attr->ncqe > dev->max_cq_depth)
 			return NULL;
@@ -662,12 +668,9 @@ struct ibv_cq *bnxt_re_dv_create_cq(struct ibv_context *ibvctx,
 		cq->dv_cq_flags = BNXT_DV_CQ_FLAGS_HELPER;
 	}
 
-	new_va = cq_umem->addr + cq_attr->cq_umem_offset;
-	bnxt_trace_dv(NULL, "%s: Updating CQ VA from: 0x%lx to: 0x%lx\n",
-		      __func__, (uint64_t)cq->cqq->va, (uint64_t)new_va);
-	cq->cqq->va = new_va;
-
-	if (!cq_attr->umem_handle) {
+	if (cq_attr->umem_handle) {
+		cq_umem = (struct bnxt_re_dv_umem *)cq_attr->umem_handle;
+	} else {
 		cq_umem = bnxt_re_dv_cq_umem_reg(ibvctx, cq);
 		if (!cq_umem) {
 			fprintf(stderr, "%s: bnxt_re_dv_cq_umem_reg() failed\n", __func__);
@@ -675,6 +678,11 @@ struct ibv_cq *bnxt_re_dv_create_cq(struct ibv_context *ibvctx,
 		}
 		cq->dv_cq_flags |= BNXT_DV_CQ_FLAGS_UMEM_REG_DEFAULT;
 	}
+
+	new_va = cq_umem->addr + cq_attr->cq_umem_offset;
+	bnxt_trace_dv(NULL, "%s: Updating CQ VA from: 0x%lx to: 0x%lx\n",
+		      __func__, (uint64_t)cq->cqq->va, (uint64_t)new_va);
+	cq->cqq->va = new_va;
 	cq->cq_umem = cq_umem;
 
 	ret = bnxt_re_dv_create_cq_cmd(dev, ibvctx, cq, cq_attr, comp_mask, &resp);
@@ -685,8 +693,9 @@ struct ibv_cq *bnxt_re_dv_create_cq(struct ibv_context *ibvctx,
 
 	ret = bnxt_re_dv_init_cq(ibvctx, cq, &resp);
 	if (ret) {
-		fprintf(stderr, "%s: bnxt_re_dv_create_cq_cmd() failed\n", __func__);
-		goto umem_dereg;
+		fprintf(stderr, "%s: bnxt_re_dv_init_cq() failed\n", __func__);
+		bnxt_re_dv_destroy_cq(&cq->verbs_cq.cq);
+		return NULL;
 	}
 
 	cq->dv_cq_flags |= BNXT_DV_CQ_FLAGS_VALID;
@@ -737,10 +746,11 @@ int bnxt_re_dv_destroy_cq(struct ibv_cq *ibvcq)
 		return ret;
 	}
 
-	if (cq->umem_reg) {
+	if (cq->dv_cq_flags & BNXT_DV_CQ_FLAGS_UMEM_REG_DEFAULT)
 		bnxt_re_dv_umem_dereg(cq->cq_umem);
+
+	if (cq->dv_cq_flags & BNXT_DV_CQ_FLAGS_HELPER)
 		bnxt_re_free_mem(cq->mem, NULL);
-	}
 
 	if (cq->toggle_map)
 		munmap(cq->toggle_map, cq->toggle_size);
@@ -750,17 +760,36 @@ int bnxt_re_dv_destroy_cq(struct ibv_cq *ibvcq)
 
 static struct bnxt_re_qp *
 bnxt_re_dv_alloc_qp(struct ibv_context *ibvctx,
-		    struct ibv_qp_init_attr_ex *attr)
+		    struct ibv_qp_init_attr_ex *attr,
+		    enum bnxt_re_dv_wqe_mode wqe_mode_override)
 {
 	struct bnxt_re_context *cntx = to_bnxt_re_context(ibvctx);
 	struct bnxt_re_qattr qattr[2];
 	struct bnxt_re_qp *qp;
+	uint8_t wqe_mode;
 	void *mem;
 
 	if (bnxt_re_check_qp_limits(cntx, attr))
 		return NULL;
 
+	if (wqe_mode_override == BNXT_RE_DV_WQE_MODE_DEFAULT) {
+		wqe_mode = cntx->modes & BNXT_RE_WQE_MODE_VARIABLE;
+	} else if (wqe_mode_override == BNXT_RE_DV_WQE_MODE_VARIABLE) {
+		wqe_mode = BNXT_RE_WQE_MODE_VARIABLE;
+	} else if (wqe_mode_override == BNXT_RE_DV_WQE_MODE_STATIC) {
+		wqe_mode = BNXT_RE_WQE_MODE_STATIC;
+	} else {
+		fprintf(stderr, "Invalid wqe_mode_override: %u\n",
+			(uint32_t)wqe_mode_override);
+		return NULL;
+	}
+
 	memset(qattr, 0, (2 * sizeof(*qattr)));
+	qattr[BNXT_RE_QATTR_SQ_INDX].wqe_mode = wqe_mode;
+	qattr[BNXT_RE_QATTR_RQ_INDX].wqe_mode = wqe_mode;
+	if (wqe_mode == BNXT_RE_WQE_MODE_STATIC)
+		attr->cap.max_inline_data = BNXT_RE_MAX_INLINE_SIZE;
+
 	mem = bnxt_re_alloc_qpslab(cntx, attr, qattr);
 	if (!mem)
 		return NULL;
@@ -773,7 +802,7 @@ bnxt_re_dv_alloc_qp(struct ibv_context *ibvctx,
 	qp->mem = mem;
 	qp->cctx = cntx->cctx;
 	qp->cntx = cntx;
-	qp->qpmode = cntx->modes & BNXT_RE_WQE_MODE_VARIABLE;
+	qp->qpmode = wqe_mode;
 	qp->re_pd = to_bnxt_re_pd(attr->pd);
 
 	/* alloc queue pointers */
@@ -805,13 +834,18 @@ bnxt_re_dv_create_qp_cmd_int(struct ibv_context *ibvctx,
 	DECLARE_COMMAND_BUFFER(cmd,
 			       BNXT_RE_OBJECT_DV_QP,
 			       BNXT_RE_METHOD_DV_CREATE_QP,
-			       9);
+			       10);
 	struct bnxt_re_context *cntx = to_bnxt_re_context(ibvctx);
 	struct bnxt_re_dv_db_region_attr *db_attr = NULL;
 	struct bnxt_re_dv_create_qp_req req = {};
 	struct ib_uverbs_attr *handle;
 	struct bnxt_re_cq *re_cq;
 	int ret;
+
+	if (!dv_qp_attr->sq_wqe_sz) {
+		fprintf(stderr, "%s: Invalid sq_wqe_sz\n", __func__);
+		return -EINVAL;
+	}
 
 	/* Input args */
 	req.qp_type = dv_qp_attr->qp_type;
@@ -822,6 +856,8 @@ bnxt_re_dv_create_qp_cmd_int(struct ibv_context *ibvctx,
 	req.max_inline_data = dv_qp_attr->max_inline_data;
 
 	req.pd_id = dv_qp_attr_int->pdid;
+	fill_attr_in_obj(cmd, BNXT_RE_DV_CREATE_QP_PD_HANDLE,
+			 qp->re_pd->ibvpd.handle);
 	req.qp_handle = dv_qp_attr_int->qp_handle;
 	if (qp->sq_umem) {
 		fill_attr_in_obj(cmd, BNXT_RE_DV_CREATE_QP_SQ_UMEM_HANDLE,
@@ -836,6 +872,9 @@ bnxt_re_dv_create_qp_cmd_int(struct ibv_context *ibvctx,
 	req.sq_wqe_sz = dv_qp_attr_int->sq_wqe_sz;
 	req.sq_psn_sz = dv_qp_attr_int->sq_psn_sz;
 	req.sq_npsn = dv_qp_attr_int->sq_npsn;
+
+	req.wqe_mode = qp->qpmode;
+	req.comp_mask |= BNXT_RE_DV_CREATE_QP_COMP_MASK_WQE_MODE;
 
 	if (!dv_qp_attr->srq) {
 		if (qp->rq_umem) {
@@ -1083,10 +1122,39 @@ fail:
 	return -EIO;
 }
 
+/* Validate static WQE mode */
+static int bnxt_re_dv_validate_wqe_mode(struct bnxt_re_context *cntx,
+					struct bnxt_re_dv_qp_init_attr *dv_qp_attr)
+{
+	uint8_t wqe_mode;
+
+	/* Is WQE mode explicitly specified */
+	if (!(dv_qp_attr->comp_mask & BNXT_RE_DV_QP_COMP_MASK_WQE_MODE))
+		return 0; /* Use context default, no validation needed */
+
+	wqe_mode = dv_qp_attr->wqe_mode;
+	if (wqe_mode == BNXT_RE_DV_WQE_MODE_VARIABLE)
+		return 0;
+
+	/* Static WQE mode */
+	if (dv_qp_attr->max_send_sge > BNXT_RE_STATIC_WQE_MAX_SGE ||
+	    dv_qp_attr->max_recv_sge > BNXT_RE_STATIC_WQE_MAX_SGE) {
+		fprintf(stderr,
+			"%s: Supported SGE count: %d, Requested: max_send_sge: %d max_recv_sge: %d\n",
+			__func__, BNXT_RE_STATIC_WQE_MAX_SGE,
+			dv_qp_attr->max_send_sge, dv_qp_attr->max_recv_sge);
+		return -EINVAL;
+	}
+
+	return 0;
+}
+
 static struct ibv_qp *
 bnxt_re_dv_create_qp_int(struct ibv_pd *ibvpd,
 			 struct bnxt_re_dv_qp_init_attr *dv_qp_attr)
 {
+	struct bnxt_re_context *cntx = to_bnxt_re_context(ibvpd->context);
+	enum bnxt_re_dv_wqe_mode wqe_mode = BNXT_RE_DV_WQE_MODE_DEFAULT;
 	struct bnxt_re_dv_qp_init_attr_internal dv_qp_attr_int = {};
 	struct bnxt_re_dv_create_qp_resp resp = {};
 	struct ibv_qp_init_attr attr = {};
@@ -1094,12 +1162,19 @@ bnxt_re_dv_create_qp_int(struct ibv_pd *ibvpd,
 	struct bnxt_re_qp *qp;
 	int ret;
 
+	ret = bnxt_re_dv_validate_wqe_mode(cntx, dv_qp_attr);
+	if (ret)
+		return NULL;
+
+	if (dv_qp_attr->comp_mask & BNXT_RE_DV_QP_COMP_MASK_WQE_MODE)
+		wqe_mode = dv_qp_attr->wqe_mode;
+
 	memset(&attr_ex, 0, sizeof(attr_ex));
 	fill_ib_attr_from_dv_qp_attr(dv_qp_attr, &attr);
 	memcpy(&attr_ex, &attr, sizeof(attr));
 	attr_ex.comp_mask = IBV_QP_INIT_ATTR_PD;
 	attr_ex.pd = ibvpd;
-	qp = bnxt_re_dv_alloc_qp(ibvpd->context, &attr_ex);
+	qp = bnxt_re_dv_alloc_qp(ibvpd->context, &attr_ex, wqe_mode);
 	if (!qp) {
 		fprintf(stderr, "%s: failed\n", __func__);
 		return NULL;
@@ -1224,7 +1299,9 @@ void bnxt_re_dv_copy_qp_mem_info(struct bnxt_re_dv_qp_mem_info *dst,
 	dst->rq_len = src->rq_len;
 	dst->rq_slots = src->rq_slots;
 	dst->rq_wqe_sz = src->rq_wqe_sz;
-	dst->comp_mask = src->comp_mask;
+	/* comp_mask is caller-owned; do not overwrite it with the
+	 * zero-initialized internal struct value.
+	 */
 }
 
 /* Overwrite the VA in SQ and RQ to the VA allocated by the app.
@@ -1285,6 +1362,7 @@ int bnxt_re_dv_qp_mem_alloc(struct ibv_pd *ibvpd,
 			    struct ibv_qp_init_attr *attr,
 			    struct bnxt_re_dv_qp_mem_info *dv_qp_mem)
 {
+	enum bnxt_re_dv_wqe_mode wqe_mode = BNXT_RE_DV_WQE_MODE_DEFAULT;
 	struct bnxt_re_dv_qp_init_attr_internal dv_qp_attr_int = {};
 	struct ibv_qp_init_attr_ex attr_ex;
 	struct bnxt_re_qp *qp;
@@ -1293,7 +1371,9 @@ int bnxt_re_dv_qp_mem_alloc(struct ibv_pd *ibvpd,
 	memcpy(&attr_ex, attr, sizeof(*attr));
 	attr_ex.comp_mask = IBV_QP_INIT_ATTR_PD;
 	attr_ex.pd = ibvpd;
-	qp = bnxt_re_dv_alloc_qp(ibvpd->context, &attr_ex);
+	if (dv_qp_mem->comp_mask & BNXT_RE_DV_QP_COMP_MASK_WQE_MODE)
+		wqe_mode = dv_qp_mem->wqe_mode;
+	qp = bnxt_re_dv_alloc_qp(ibvpd->context, &attr_ex, wqe_mode);
 	if (!qp) {
 		fprintf(stderr, "%s: failed\n", __func__);
 		return -ENOMEM;
@@ -1320,7 +1400,7 @@ bnxt_re_dv_create_qp_cmd_ext(struct ibv_context *ibvctx,
 	DECLARE_COMMAND_BUFFER(cmd,
 			       BNXT_RE_OBJECT_DV_QP,
 			       BNXT_RE_METHOD_DV_CREATE_QP,
-			       9);
+			       10);
 	struct bnxt_re_context *cntx = to_bnxt_re_context(ibvctx);
 	struct bnxt_re_dv_db_region_attr *db_attr = NULL;
 	struct bnxt_re_dv_create_qp_req req = {};
@@ -1333,6 +1413,11 @@ bnxt_re_dv_create_qp_cmd_ext(struct ibv_context *ibvctx,
 	uint32_t size;
 	int ret;
 
+	if (!dv_qp_attr->sq_wqe_sz) {
+		fprintf(stderr, "%s: Invalid sq_wqe_sz\n", __func__);
+		return -EINVAL;
+	}
+
 	req.qp_type = dv_qp_attr->qp_type;
 	req.max_send_wr = dv_qp_attr->max_send_wr;
 	req.max_recv_wr = dv_qp_attr->max_recv_wr;
@@ -1341,6 +1426,8 @@ bnxt_re_dv_create_qp_cmd_ext(struct ibv_context *ibvctx,
 	req.max_inline_data = dv_qp_attr->max_inline_data;
 
 	req.pd_id = qp->re_pd->pdid;
+	fill_attr_in_obj(cmd, BNXT_RE_DV_CREATE_QP_PD_HANDLE,
+			 qp->re_pd->ibvpd.handle);
 	req.qp_handle = dv_qp_attr->qp_handle;
 
 	sq_umem = dv_qp_attr->sq_umem_handle;
@@ -1416,6 +1503,9 @@ bnxt_re_dv_create_qp_cmd_ext(struct ibv_context *ibvctx,
 				 dv_qp_attr->srq->handle);
 	}
 
+	req.wqe_mode = qp->qpmode;
+	req.comp_mask |= BNXT_RE_DV_CREATE_QP_COMP_MASK_WQE_MODE;
+
 	if (bnxt_re_dv_qp_alloc_helper)
 		bnxt_re_dv_qp_update_va(qp, sq_umem, rq_umem);
 
@@ -1477,8 +1567,21 @@ bnxt_re_dv_create_qp_ext(struct ibv_pd *ibvpd,
 	struct ibv_qp_init_attr_ex attr_ex;
 	struct ibv_qp_init_attr attr = {};
 	struct bnxt_re_qp *qp;
+	uint8_t wqe_mode;
 	int rc;
 
+	rc = bnxt_re_dv_validate_wqe_mode(cntx, dv_qp_attr);
+	if (rc)
+		return NULL;
+
+	/* Convert DV wqe_mode to abi encoding, or use context default. */
+	if (dv_qp_attr->comp_mask & BNXT_RE_DV_QP_COMP_MASK_WQE_MODE)
+		wqe_mode = (dv_qp_attr->wqe_mode == BNXT_RE_DV_WQE_MODE_STATIC) ?
+				BNXT_RE_WQE_MODE_STATIC : BNXT_RE_WQE_MODE_VARIABLE;
+	else
+		wqe_mode = cntx->modes & BNXT_RE_WQE_MODE_VARIABLE;
+
+	bnxt_trace_dv(NULL, "%s: wqe_mode: %d\n", __func__, wqe_mode);
 	if (!bnxt_re_dv_qp_alloc_helper) {
 		qp = malloc(sizeof(*qp));
 		if (!qp)
@@ -1489,7 +1592,7 @@ bnxt_re_dv_create_qp_ext(struct ibv_pd *ibvpd,
 		qp->mem = NULL;
 		qp->cctx = cntx->cctx;
 		qp->cntx = cntx;
-		qp->qpmode = cntx->modes & BNXT_RE_WQE_MODE_VARIABLE;
+		qp->qpmode = wqe_mode;
 		qp->re_pd = to_bnxt_re_pd(ibvpd);
 
 		dv_qp_attr->qp_handle = (uint64_t)qp;
@@ -1605,20 +1708,20 @@ int bnxt_re_dv_destroy_obj(struct ibv_context *ibvctx, uint32_t handle)
  * Returns 0 on success, -EINVAL on validation failure
  */
 static int bnxt_re_dv_create_obj_fill_umem_attrs(struct bnxt_re_dev *dev,
-						 struct bnxt_re_dv_create_obj_init_attr *attr,
+						 struct bnxt_re_dv_create_obj_req *req,
 						 void *cmd)
 {
 	struct bnxt_re_dv_umem *umem;
 
-	umem = (struct bnxt_re_dv_umem *)attr->umem;
+	umem = (struct bnxt_re_dv_umem *)req->umem;
 	if (!umem) {
 		fprintf(stderr, "%s: Invalid umem handle\n", __func__);
 		errno = EINVAL;
 		return -EINVAL;
 	}
-	if (!bnxt_re_dv_is_valid_umem(dev, umem, attr->offset, attr->size)) {
+	if (!bnxt_re_dv_is_valid_umem(dev, umem, req->offset, req->size)) {
 		fprintf(stderr, "%s: Invalid handle: 0x%x offset: 0x%lx size: 0x%x\n",
-			__func__, umem->handle, attr->offset, attr->size);
+			__func__, umem->handle, req->offset, req->size);
 		errno = EINVAL;
 		return -EINVAL;
 	}
@@ -1631,26 +1734,26 @@ static int bnxt_re_dv_create_obj_fill_umem_attrs(struct bnxt_re_dev *dev,
  * Returns 0 on success, -EINVAL on validation failure
  */
 static int
-bnxt_re_dv_create_obj_fill_ring_attrs(struct bnxt_re_dv_create_obj_init_attr *attr, void *cmd)
+bnxt_re_dv_create_obj_fill_ring_attrs(struct bnxt_re_dv_create_obj_req *req, void *cmd)
 {
 	struct bnxt_re_cq *re_cq;
 
-	if (!attr->stats_handle) {
+	if (!req->stats_handle) {
 		errno = EINVAL;
 		return -EINVAL;
 	}
 
-	fill_attr_in_obj(cmd, BNXT_RE_DV_CREATE_OBJ_STATS_HANDLE, attr->stats_handle);
-	if (attr->obj_type == BNXT_RE_OBJ_TYPE_RX_AGGR) {
-		if (!attr->rx_handle) {
+	fill_attr_in_obj(cmd, BNXT_RE_DV_CREATE_OBJ_STATS_HANDLE, req->stats_handle);
+	if (req->obj_type == BNXT_RE_OBJ_TYPE_RX_AGGR) {
+		if (!req->rx_handle) {
 			errno = EINVAL;
 			return -EINVAL;
 		}
-		fill_attr_in_obj(cmd, BNXT_RE_DV_CREATE_OBJ_RX_HANDLE, attr->rx_handle);
+		fill_attr_in_obj(cmd, BNXT_RE_DV_CREATE_OBJ_RX_HANDLE, req->rx_handle);
 	}
 
-	if (attr->send_cq) {
-		re_cq = to_bnxt_re_cq(attr->send_cq);
+	if (req->send_cq) {
+		re_cq = to_bnxt_re_cq(req->send_cq);
 		fill_attr_in_obj(cmd, BNXT_RE_DV_CREATE_OBJ_CQ_HANDLE,
 				 re_cq->verbs_cq.cq.handle);
 	}
@@ -1676,7 +1779,7 @@ static bool bnxt_re_dv_create_obj_is_ring_type(uint8_t obj_type)
 }
 
 int bnxt_re_dv_create_obj(struct ibv_context *ibvctx,
-			  struct bnxt_re_dv_create_obj_init_attr *attr,
+			  struct bnxt_re_dv_create_obj_req *dvreq,
 			  struct bnxt_re_dv_create_obj_resp *resp)
 {
 	DECLARE_COMMAND_BUFFER(cmd,
@@ -1685,29 +1788,36 @@ int bnxt_re_dv_create_obj(struct ibv_context *ibvctx,
 			       7);
 
 	struct bnxt_re_dev *dev = to_bnxt_re_dev(ibvctx->device);
+	struct bnxt_re_create_obj_req req = {};
 	struct ib_uverbs_attr *handle;
 	int ret;
 
-	if (bnxt_re_dv_create_obj_uses_umem(attr->obj_type)) {
-		ret = bnxt_re_dv_create_obj_fill_umem_attrs(dev, attr, cmd);
+	if (bnxt_re_dv_create_obj_uses_umem(dvreq->obj_type)) {
+		ret = bnxt_re_dv_create_obj_fill_umem_attrs(dev, dvreq, cmd);
 		if (ret)
 			return ret;
 	}
 
-	if (bnxt_re_dv_create_obj_is_ring_type(attr->obj_type)) {
-		ret = bnxt_re_dv_create_obj_fill_ring_attrs(attr, cmd);
+	if (bnxt_re_dv_create_obj_is_ring_type(dvreq->obj_type)) {
+		ret = bnxt_re_dv_create_obj_fill_ring_attrs(dvreq, cmd);
 		if (ret)
 			return ret;
-	} else if (attr->obj_type != BNXT_RE_OBJ_TYPE_STATS &&
-		   attr->obj_type != BNXT_RE_OBJ_TYPE_VNIC &&
-		   attr->obj_type != BNXT_RE_OBJ_TYPE_BFID &&
-		   attr->obj_type != BNXT_RE_OBJ_TYPE_RSS) {
-		fprintf(stderr, "%s: Invalid obj_type: %d\n", __func__, attr->obj_type);
+	} else if (dvreq->obj_type != BNXT_RE_OBJ_TYPE_STATS &&
+		   dvreq->obj_type != BNXT_RE_OBJ_TYPE_VNIC &&
+		   dvreq->obj_type != BNXT_RE_OBJ_TYPE_BFID &&
+		   dvreq->obj_type != BNXT_RE_OBJ_TYPE_RSS) {
+		fprintf(stderr, "%s: Invalid obj_type: %d\n", __func__, dvreq->obj_type);
 		errno = EINVAL;
 		return -EINVAL;
 	}
 
-	fill_attr_in_ptr(cmd, BNXT_RE_CREATE_OBJ_ATTR_PTR, attr);
+	req.obj_type = dvreq->obj_type;
+	req.offset = dvreq->offset;
+	req.pg_size = dvreq->pg_size;
+	req.size = dvreq->size;
+	memcpy(&req.attr, &dvreq->attr, sizeof(req.attr));
+
+	fill_attr_in_ptr(cmd, BNXT_RE_DV_CREATE_OBJ_REQ_PTR, &req);
 	handle = fill_attr_out_obj(cmd, BNXT_RE_CREATE_OBJ_HANDLE);
 	fill_attr_out_ptr(cmd, BNXT_RE_CREATE_OBJ_RESP, resp);
 
@@ -1719,7 +1829,7 @@ int bnxt_re_dv_create_obj(struct ibv_context *ibvctx,
 	}
 
 	if (handle)
-		attr->handle = read_attr_obj(BNXT_RE_CREATE_OBJ_HANDLE, handle);
+		dvreq->handle = read_attr_obj(BNXT_RE_CREATE_OBJ_HANDLE, handle);
 	return 0;
 }
 

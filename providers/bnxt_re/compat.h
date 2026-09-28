@@ -37,7 +37,9 @@
 #ifndef __BNXT_RE_COMPAT_H__
 #define __BNXT_RE_COMPAT_H__
 
-#include "bnxt_re_config.h"
+#if HAVE_CONFIG_H
+#include <config.h>
+#endif		/* HAVE_CONFIG_H */
 
 #include "list.h"
 #include "main.h"
