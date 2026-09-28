@@ -37,9 +37,7 @@
 #ifndef __BNXT_RE_VERBS_H__
 #define __BNXT_RE_VERBS_H__
 
-#if HAVE_CONFIG_H
-#include <config.h>
-#endif                          /* HAVE_CONFIG_H */
+#include "bnxt_re_config.h"
 
 #include <assert.h>
 #include <stdlib.h>
@@ -54,12 +52,7 @@
 #include <netinet/in.h>
 #include <unistd.h>
 
-#ifdef HAVE_RDMA_CORE_PKG
-#include "driver.h"
-#else
 #include <infiniband/driver.h>
-#include <infiniband/arch.h>
-#endif
 
 #include <infiniband/verbs.h>
 

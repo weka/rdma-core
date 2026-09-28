@@ -34,9 +34,7 @@
  * Description: Main component of the bnxt_re driver
  */
 
-#if HAVE_CONFIG_H
-#include <config.h>
-#endif                          /* HAVE_CONFIG_H */
+#include "bnxt_re_config.h"
 
 #include <assert.h>
 #include <stdlib.h>
@@ -2695,7 +2693,10 @@ int bnxt_re_alloc_queues(struct bnxt_re_qp *qp,
 	 */
 	que->pad = (que->va + que->depth * que->stride);
 	psn_size = bnxt_re_get_psne_size(qp->cntx);
-	que->pad_stride_log2 = (uint32_t)log2((double)psn_size);
+	/* psn_size is always a power of 2; use ilog32_nz() to avoid
+	 * pulling in libm just for one log2() call.
+	 */
+	que->pad_stride_log2 = (uint32_t)(ilog32_nz(psn_size) - 1);
 
 	ret = bnxt_re_alloc_init_swque(qp->jsqq, qp->mem, &qattr[indx]);
 	if (ret)

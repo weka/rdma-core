@@ -37,9 +37,7 @@
 #ifndef __BNXT_RE_MAIN_H__
 #define __BNXT_RE_MAIN_H__
 
-#if HAVE_CONFIG_H
-#include <config.h>
-#endif
+#include "bnxt_re_config.h"
 
 #include <inttypes.h>
 #include <stddef.h>
@@ -48,20 +46,18 @@
 #include <endian.h>
 #include <pthread.h>
 #include <sys/param.h>
-#include <math.h>
 #include <stdio.h>
 #include <stdarg.h>
 
-#ifdef HAVE_RDMA_CORE_PKG
-#include "driver.h"
-#include "util/udma_barrier.h"
-#include "util/mmio.h"
-#else
+/* We always build in-tree against rdma-core. Use ccan/ilog.h's
+ * ilog32_nz() helper instead of <math.h> log2() so we don't have to
+ * link against libm.
+ */
 #include <infiniband/driver.h>
-#include <infiniband/arch.h>
-#define mmio_write64(dst, val)	(*((volatile __u64 *) (dst)) = val)
-#endif /*HAVE_RDMA_CORE_PKG*/
-#include "ccan/minmax.h"
+#include <util/udma_barrier.h>
+#include <util/mmio.h>
+#include <ccan/minmax.h>
+#include <ccan/ilog.h>
 
 #include "version.h"
 #include "compat.h"

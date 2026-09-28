@@ -34,9 +34,7 @@
  * Description: Main component of the bnxt_re driver
  */
 
-#if HAVE_CONFIG_H
-#include <config.h>
-#endif                          /* HAVE_CONFIG_H */
+#include "bnxt_re_config.h"
 
 #include <stdio.h>
 #include <stdlib.h>

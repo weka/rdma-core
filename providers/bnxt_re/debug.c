@@ -34,9 +34,7 @@
  * Description: rocelib test suite of the bnxt_re driver
  */
 
-#if HAVE_CONFIG_H
-#include <config.h>
-#endif
+#include "bnxt_re_config.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -96,8 +94,10 @@ enum {
 };
 
 uint32_t bnxt_dev_debug_mask;
+#if defined(BNXT_RE_ENABLE_DEV_DEBUG)
 static uint32_t bnxt_dbg_cycle_cnt_mod = BNXT_DBG_CYCLE_CNT_DEFAULT_MOD;
 struct bnxt_dbg_cycle_cnt exp_send_cycle_cnt;
+#endif /* BNXT_RE_ENABLE_DEV_DEBUG */
 
 __u32 err_sq_idx_get(void)
 {
@@ -135,6 +135,7 @@ void bnxt_rocelib_test_init(void)
 	if (env)
 		bnxt_dev_debug_mask = strtol(env, NULL, 0);
 
+#if defined(BNXT_RE_ENABLE_DEV_DEBUG)
 	if (bnxt_dev_debug_mask & BNXT_DBG_DUMP_CYCLES) {
 		env = getenv("BNXT_DBG_CYCLE_CNT_MOD");
 		if (env) {
@@ -149,6 +150,7 @@ void bnxt_rocelib_test_init(void)
 		bnxt_dbg_cycle_cnt_init(&exp_send_cycle_cnt, 5, 0,
 					"exp_post_send");
 	}
+#endif /* BNXT_RE_ENABLE_DEV_DEBUG */
 
 	bnxt_err_sq_idx = err_sq_idx_get();
 	if (bnxt_err_sq_idx)
@@ -288,6 +290,7 @@ void bnxt_dbg_dump_wr(struct ibv_send_wr *wr, struct bnxt_re_qp *qp, void *hdr, 
 	}
 }
 
+#if defined(BNXT_RE_ENABLE_DEV_DEBUG)
 static void bnxt_dbg_cycle_cnt_print(struct bnxt_dbg_cycle_cnt *prof)
 {
 	uint32_t i, num_segs;
@@ -352,6 +355,7 @@ void bnxt_dbg_cycle_cnt_end(struct bnxt_dbg_cycle_cnt *prof)
 		memset(prof->cycles_elapsed, 0, sizeof(prof->cycles_elapsed));
 	}
 }
+#endif /* BNXT_RE_ENABLE_DEV_DEBUG */
 
 /* dump the MSN entry */
 void dump_dbg_msn_tbl(struct bnxt_re_qp *qp, struct bnxt_re_msns *msns,

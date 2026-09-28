@@ -37,11 +37,13 @@
 #ifndef __BNXT_RE_ABI_H__
 #define __BNXT_RE_ABI_H__
 
-#if (IBVERBS_PABI_VERSION >= 17)
-#include <kern-abi.h>
-#else
+/* WEKA: always use the installed-system header path. The upstream drop's
+ * IBVERBS_PABI_VERSION>=17 branch references <kern-abi.h> which is the
+ * in-tree relative path in the rdma-core source layout; our build
+ * compiles against installed rdma-core headers where only
+ * <infiniband/kern-abi.h> is exposed.
+ */
 #include <infiniband/kern-abi.h>
-#endif
 
 #include <rdma/ib_user_ioctl_cmds.h>
 
